@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FOSS builds have no internet access. Nothing in the app uses the network; the INTERNET and
+     ACCESS_NETWORK_STATE permissions only came in through Google Play Billing's log-upload
+     library (com.google.android.datatransport), which FOSS builds never start. Removing them
+     here means Android refuses any network socket from the app, whatever a library tries. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
+</manifest>
