@@ -472,12 +472,14 @@ class LibrePodsService: Service() {
             addAction(Intent.ACTION_SCREEN_OFF)
         }, RECEIVER_NOT_EXPORTED)
         if (BuildConfig.DEBUG) {
+            // Exported so adb can reach it, but only senders holding DUMP may: adb's shell has it,
+            // ordinary apps can't get it, so other apps on the phone can't drive these commands.
             registerReceiver(debugReceiver, IntentFilter().apply {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)
-            }, RECEIVER_EXPORTED)
+            }, Manifest.permission.DUMP, null, RECEIVER_EXPORTED)
         }
 
         MediaController.initialize(
