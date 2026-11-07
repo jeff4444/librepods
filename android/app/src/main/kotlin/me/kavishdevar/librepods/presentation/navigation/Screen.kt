@@ -85,6 +85,12 @@ sealed interface Screen: NavKey {
     ): DeviceScreen
 
     @Serializable
+    data class StemPress(
+        override val macAddress: MacAddress,
+        val press: String
+    ): DeviceScreen
+
+    @Serializable
     data class LongPress(
         override val macAddress: MacAddress,
         val bud: String

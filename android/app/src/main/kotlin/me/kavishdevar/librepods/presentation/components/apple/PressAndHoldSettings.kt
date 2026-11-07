@@ -32,17 +32,8 @@ fun PressAndHoldSettings(
     navigateToLeftLongPress: () -> Unit,
     navigateToRightLongPress: () -> Unit
 ) {
-    val leftActionText = when (leftAction) {
-        StemAction.CYCLE_listening_mode_MODES -> stringResource(R.string.listening_mode)
-        StemAction.DIGITAL_ASSISTANT -> "Digital Assistant"
-        else -> "INVALID!!"
-    }
-
-    val rightActionText = when (rightAction) {
-        StemAction.CYCLE_listening_mode_MODES -> stringResource(R.string.listening_mode)
-        StemAction.DIGITAL_ASSISTANT -> "Digital Assistant"
-        else -> "INVALID!!"
-    }
+    val leftActionText = stemActionLabel(leftAction)
+    val rightActionText = stemActionLabel(rightAction)
 
     StyledList(
         title = stringResource(R.string.press_and_hold_airpods)

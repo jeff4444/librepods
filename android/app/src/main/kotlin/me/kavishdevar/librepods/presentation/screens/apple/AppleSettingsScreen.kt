@@ -76,6 +76,8 @@ import me.kavishdevar.librepods.presentation.components.apple.ConnectionSettings
 import me.kavishdevar.librepods.presentation.components.apple.HearingHealthSettings
 import me.kavishdevar.librepods.presentation.components.apple.NoiseControlSettings
 import me.kavishdevar.librepods.presentation.components.apple.PressAndHoldSettings
+import me.kavishdevar.librepods.presentation.components.apple.StemPressSettings
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.presentation.components.primitives.StyledButton
 import me.kavishdevar.librepods.presentation.components.primitives.StyledListItem
 import me.kavishdevar.librepods.presentation.components.primitives.StyledListItemOrientation
@@ -100,6 +102,7 @@ fun AppleSettingsRoute(
     navigateToHearingAid: () -> Unit,
     navigateToLeftLongPress: () -> Unit,
     navigateToRightLongPress: () -> Unit,
+    navigateToStemPress: (StemPressType) -> Unit,
     navigateToPurchase: () -> Unit,
     navigateToEqualizer: () -> Unit,
     navigateToHeadTracking: () -> Unit,
@@ -136,6 +139,7 @@ fun AppleSettingsRoute(
         navigateToHearingAid = navigateToHearingAid,
         navigateToLeftLongPress = navigateToLeftLongPress,
         navigateToRightLongPress = navigateToRightLongPress,
+        navigateToStemPress = navigateToStemPress,
         navigateToPurchase = navigateToPurchase,
         navigateToEqualizer = navigateToEqualizer,
         navigateToHeadTracking = navigateToHeadTracking,
@@ -176,6 +180,7 @@ fun AppleSettingsScreen(
     navigateToHearingAid: () -> Unit,
     navigateToLeftLongPress: () -> Unit,
     navigateToRightLongPress: () -> Unit,
+    navigateToStemPress: (StemPressType) -> Unit,
     navigateToPurchase: () -> Unit,
     navigateToEqualizer: () -> Unit,
     navigateToHeadTracking: () -> Unit,
@@ -385,6 +390,15 @@ fun AppleSettingsScreen(
             }
 
             if (baseCapabilities.contains(BaseCapability.STEM_CONFIG)) {
+                item(key = "spacer_stem_presses") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                item(key = "stem_presses") {
+                    StemPressSettings(
+                        settings = settings,
+                        navigateToStemPress = navigateToStemPress
+                    )
+                }
                 item(key = "spacer_press_hold") {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
@@ -663,6 +677,7 @@ fun AppleSettingsScreenPreviewApple() {
             navigateToHearingAid = {},
             navigateToLeftLongPress = {},
             navigateToRightLongPress = {},
+            navigateToStemPress = {},
             navigateToPurchase = {},
             navigateToEqualizer = {},
             navigateToHeadTracking = {},
@@ -704,6 +719,7 @@ fun AppleSettingsScreenPreviewMaterial() {
             navigateToHearingAid = {},
             navigateToLeftLongPress = {},
             navigateToRightLongPress = {},
+            navigateToStemPress = {},
             navigateToPurchase = {},
             navigateToEqualizer = {},
             navigateToHeadTracking = {},

@@ -3,6 +3,8 @@ package me.kavishdevar.librepods.core.devices
 import androidx.annotation.IntRange
 import kotlinx.serialization.Serializable
 import me.kavishdevar.librepods.core.data.StemAction
+import me.kavishdevar.librepods.core.data.StemPressBud
+import me.kavishdevar.librepods.core.data.StemPressType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -21,6 +23,15 @@ data class AppleSettings(
 
     val leftLongPressAction: StemAction = StemAction.CYCLE_listening_mode_MODES, // left_long_press_action
     val rightLongPressAction: StemAction = StemAction.CYCLE_listening_mode_MODES, // right_long_press_action
+
+    // Presses left at their default are handled by the AirPods themselves; any other choice makes
+    // the AirPods forward that press type to the phone (see RAW_GESTURES_CONFIG).
+    val leftSinglePressAction: StemAction = StemAction.PLAY_PAUSE,
+    val rightSinglePressAction: StemAction = StemAction.PLAY_PAUSE,
+    val leftDoublePressAction: StemAction = StemAction.NEXT_TRACK,
+    val rightDoublePressAction: StemAction = StemAction.NEXT_TRACK,
+    val leftTriplePressAction: StemAction = StemAction.PREVIOUS_TRACK,
+    val rightTriplePressAction: StemAction = StemAction.PREVIOUS_TRACK,
 
     val showIslandPopup: Boolean = true, // show_island_popup
     val showBottomSheetPopup: Boolean = true, // show_bottom_sheet_popup
@@ -43,4 +54,30 @@ data class AppleSettings(
 
     val hrmAlertEnabled: Boolean = false,
     @IntRange(from = 120, to = 200) val hrmAlertThreshold: Int = 150,
-): DeviceSettings
+): DeviceSettings {
+    fun stemAction(bud: StemPressBud, type: StemPressType): StemAction {
+        val left = bud == StemPressBud.LEFT
+        return when (type) {
+            StemPressType.SINGLE_PRESS -> if (left) leftSinglePressAction else rightSinglePressAction
+            StemPressType.DOUBLE_PRESS -> if (left) leftDoublePressAction else rightDoublePressAction
+            StemPressType.TRIPLE_PRESS -> if (left) leftTriplePressAction else rightTriplePressAction
+            StemPressType.LONG_PRESS -> if (left) leftLongPressAction else rightLongPressAction
+        }
+    }
+
+    fun withStemAction(bud: StemPressBud, type: StemPressType, action: StemAction): AppleSettings {
+        val left = bud == StemPressBud.LEFT
+        return when (type) {
+            StemPressType.SINGLE_PRESS -> if (left) copy(leftSinglePressAction = action) else copy(rightSinglePressAction = action)
+            StemPressType.DOUBLE_PRESS -> if (left) copy(leftDoublePressAction = action) else copy(rightDoublePressAction = action)
+            StemPressType.TRIPLE_PRESS -> if (left) copy(leftTriplePressAction = action) else copy(rightTriplePressAction = action)
+            StemPressType.LONG_PRESS -> if (left) copy(leftLongPressAction = action) else copy(rightLongPressAction = action)
+        }
+    }
+
+    /** Press types the AirPods should forward to the phone instead of handling themselves. */
+    fun forwardedPressTypes(): Set<StemPressType> = StemPressType.entries.filterTo(mutableSetOf()) { type ->
+        val default = StemAction.defaultActions[type]
+        StemPressBud.entries.any { bud -> stemAction(bud, type) != default }
+    }
+}

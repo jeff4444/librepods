@@ -43,6 +43,8 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommandIdentifier
 import me.kavishdevar.librepods.core.data.StemAction
+import me.kavishdevar.librepods.presentation.components.apple.stemActionChoices
+import me.kavishdevar.librepods.presentation.components.apple.stemActionLabel
 import me.kavishdevar.librepods.presentation.components.primitives.StyledButton
 import me.kavishdevar.librepods.presentation.components.primitives.StyledList
 import me.kavishdevar.librepods.presentation.components.primitives.StyledListItemOrientation
@@ -92,28 +94,14 @@ fun LongPress(
             Spacer(modifier = Modifier.height(topPadding))
 
             StyledList {
-                styledListItem(
-                    contentText = stringResource(R.string.listening_mode),
-                    selected = longPressAction == StemAction.CYCLE_listening_mode_MODES,
-                    onClick = {
-                        viewModel.setLongPressAction(
-                            side,
-                            StemAction.CYCLE_listening_mode_MODES
-                        )
-                    }
-                )
-
-                styledListItem(
-                    contentText = stringResource(R.string.digital_assistant),
-                    selected = longPressAction == StemAction.DIGITAL_ASSISTANT,
-                    onClick = {
-                        viewModel.setLongPressAction(
-                            side,
-                            StemAction.DIGITAL_ASSISTANT
-                        )
-                    },
-                    enabled = uiState.isPremium
-                )
+                stemActionChoices.forEach { action ->
+                    styledListItem(
+                        contentText = stemActionLabel(action),
+                        supportingText = if (action == StemAction.AUTOMATION) stringResource(R.string.stem_action_automation_description) else null,
+                        selected = longPressAction == action,
+                        onClick = { viewModel.setLongPressAction(side, action) }
+                    )
+                }
             }
 
             if (!uiState.isPremium) {

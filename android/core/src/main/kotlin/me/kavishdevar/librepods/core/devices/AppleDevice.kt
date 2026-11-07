@@ -25,6 +25,8 @@ import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommandIdentifi
 import me.kavishdevar.librepods.core.bluetooth.att.ATTHandle
 import me.kavishdevar.librepods.core.bluetooth.att.ATTManager
 import me.kavishdevar.librepods.core.data.StemAction
+import me.kavishdevar.librepods.core.data.StemPressBud
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.BuddyState
 import me.kavishdevar.librepods.core.data.audio.MicrophoneFrame
 import me.kavishdevar.librepods.core.data.audio.MicrophoneState
@@ -265,6 +267,25 @@ class AppleDevice(
             currentByte or modeBit
         }
         setControlCommand(ControlCommandIdentifier.LISTENING_MODE_CONFIGS, newValue)
+    }
+
+    fun setStemAction(bud: StemPressBud, type: StemPressType, action: StemAction) {
+        _settings.update { it.withStemAction(bud, type, action) }
+    }
+
+    /**
+     * Tells the AirPods which press types to forward to the phone. Forwarded presses are no longer
+     * handled by the AirPods, so the app must act on every one of them. With [onCall] nothing is
+     * forwarded, so answering and hanging up work as usual.
+     */
+    fun applyStemPressForwarding(onCall: Boolean = false): Boolean {
+        val forwarded = if (onCall) emptySet() else settings.value.forwardedPressTypes()
+        return aacp.sendRawGesturesConfig(
+            singlePressCustomized = StemPressType.SINGLE_PRESS in forwarded,
+            doublePressCustomized = StemPressType.DOUBLE_PRESS in forwarded,
+            triplePressCustomized = StemPressType.TRIPLE_PRESS in forwarded,
+            longPressCustomized = StemPressType.LONG_PRESS in forwarded,
+        )
     }
 
     fun setLongPressAction(side: String, action: StemAction) {

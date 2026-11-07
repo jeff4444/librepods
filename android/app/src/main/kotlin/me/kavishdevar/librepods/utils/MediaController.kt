@@ -224,6 +224,32 @@ object MediaController {
         }
     }
 
+    /**
+     * Play/pause on behalf of the user (a stem press), like a headset button. Unlike sendPlay and
+     * sendPause, it always acts, and it leaves playback marked as the user's choice so ear
+     * detection doesn't undo it.
+     */
+    @Synchronized
+    fun sendUserPlayPause() {
+        val wasPlaying = audioManager.isMusicActive
+        Log.d("MediaController", "Sending play/pause for the user, music active: $wasPlaying")
+        audioManager.dispatchMediaKeyEvent(
+            KeyEvent(
+                KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            )
+        )
+        audioManager.dispatchMediaKeyEvent(
+            KeyEvent(
+                KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            )
+        )
+        iPausedTheMedia = false
+        userPlayedTheMedia = !wasPlaying
+        lastSelfActionAt = SystemClock.uptimeMillis()
+    }
+
     @Synchronized
     fun sendPreviousTrack() {
         Log.d("MediaController", "Sending previous track")

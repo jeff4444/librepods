@@ -32,6 +32,8 @@ import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommandIdentifier
 import me.kavishdevar.librepods.core.bluetooth.att.ATTHandle
 import me.kavishdevar.librepods.core.data.StemAction
+import me.kavishdevar.librepods.core.data.StemPressBud
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.heartrate.HeartRateSample
 import me.kavishdevar.librepods.core.data.recording.Recording
 import me.kavishdevar.librepods.core.devices.AppleDevice
@@ -174,6 +176,8 @@ class AppleViewModel(
     fun toggleListeningMode(modeBit: Int) = device.toggleListeningMode(modeBit)
 
     fun setLongPressAction(side: String, action: StemAction) = device.setLongPressAction(side, action)
+
+    fun setStemAction(bud: StemPressBud, type: StemPressType, action: StemAction) = device.setStemAction(bud, type, action)
 
     fun renameDevice(newName: String) = device.renameDevice(newName)
 

@@ -41,6 +41,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.kavishdevar.librepods.core.bluetooth.aacp.types.AppleEvent
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
 import me.kavishdevar.librepods.LibrePodsApplication
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.audio.EldDecoder
@@ -142,6 +145,8 @@ class LibrePodsService: Service() {
         (application as LibrePodsApplication).healthConnectClient
     }
 
+    private val stemPressHandler by lazy { StemPressHandler(this) }
+
     private val healthConnectHeartRateWriter by lazy {
         HealthConnectHeartRateWriter(context = this, client = { healthConnectClient })
     }
@@ -169,8 +174,28 @@ class LibrePodsService: Service() {
 
     private var isCallRinging = false
 
+    // While a call rings or is on, the AirPods handle every stem press themselves, so answering,
+    // declining and hanging up work as usual whatever the presses are mapped to.
+    @Volatile
+    private var isOnCall = false
+
+    private fun applyStemPressForwarding(device: AppleDevice) {
+        if (device.connectionState.value != ConnectionState.CONNECTED) return
+        val sent = device.applyStemPressForwarding(onCall = isOnCall)
+        Log.i(
+            TAG,
+            "stem press forwarding for ${device.macAddress.toRedactedString()}: " +
+                "${if (isOnCall) "none (on a call)" else device.settings.value.forwardedPressTypes()}, sent: $sent"
+        )
+    }
+
     private val telephonyCallback = object: TelephonyCallback(), TelephonyCallback.CallStateListener {
         override fun onCallStateChanged(state: Int) {
+            val onCall = state != TelephonyManager.CALL_STATE_IDLE
+            if (onCall != isOnCall) {
+                isOnCall = onCall
+                _devices.value.values.filterIsInstance<AppleDevice>().forEach(::applyStemPressForwarding)
+            }
             if (state == TelephonyManager.CALL_STATE_RINGING) {
                 isCallRinging = true
                 attemptConnect("phone")
@@ -559,6 +584,7 @@ class LibrePodsService: Service() {
                 observeAppleSettings(device)
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
+                observeAppleEvents(device)
             }
         }
 
@@ -572,6 +598,14 @@ class LibrePodsService: Service() {
             var previousConnectionState = ConnectionState.DISCONNECTED
             device.connectionState.collect { state ->
                 if (proximityCardWindow.isVisible) proximityCardWindow.updateConnectionState(state == ConnectionState.CONNECTED)
+
+                if (device is AppleDevice && state == ConnectionState.CONNECTED && previousConnectionState != ConnectionState.CONNECTED) {
+                    serviceCoroutineScope.launch {
+                        // Let the connection's setup packets go first.
+                        delay(2.seconds)
+                        applyStemPressForwarding(device)
+                    }
+                }
 
                 if (previousConnectionState == ConnectionState.DISCONNECTED && state == ConnectionState.AVAILABLE) {
                     when (device) {
@@ -898,8 +932,28 @@ class LibrePodsService: Service() {
                     Log.d(TAG, "settings: $settings")
 
                     appleRepository.saveSettings(device.macAddress, settings)
+
+                    if (settings.forwardedPressTypes() != previousSettings.forwardedPressTypes()) {
+                        applyStemPressForwarding(device)
+                    }
                 }
                 previousSettings = settings
+            }
+        }
+    }
+
+    fun observeAppleEvents(device: AppleDevice) {
+        serviceCoroutineScope.launch {
+            device.events.collect { event ->
+                when (event) {
+                    is AppleEvent.StemPress -> stemPressHandler.onStemPress(
+                        device = device,
+                        bud = event.bud,
+                        type = event.pressType,
+                        onCall = isOnCall
+                    )
+                    else -> {}
+                }
             }
         }
     }

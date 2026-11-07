@@ -43,8 +43,18 @@ enum class StemAction {
     PREVIOUS_TRACK,
     NEXT_TRACK,
     DIGITAL_ASSISTANT,
-    CYCLE_listening_mode_MODES;
+    CYCLE_listening_mode_MODES,
+    VOLUME_UP,
+    VOLUME_DOWN,
+    // Broadcasts STEM_PRESS_BROADCAST for automation apps (Tasker, MacroDroid, ...) to act on
+    AUTOMATION,
+    // Turns the press off: the AirPods forward it and nothing happens
+    NOTHING;
     companion object {
+        const val STEM_PRESS_BROADCAST = "me.kavishdevar.librepods.STEM_PRESS"
+        const val EXTRA_BUD = "bud"
+        const val EXTRA_PRESS = "press"
+
         fun fromString(action: String): StemAction? {
             return entries.find { it.name == action }
         }

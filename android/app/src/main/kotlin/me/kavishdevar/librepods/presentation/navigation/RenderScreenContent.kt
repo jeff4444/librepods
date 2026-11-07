@@ -30,6 +30,8 @@ import me.kavishdevar.librepods.presentation.screens.apple.HearingAidScreen
 import me.kavishdevar.librepods.presentation.screens.apple.HearingProtectionScreen
 import me.kavishdevar.librepods.presentation.screens.apple.HeartRateRoute
 import me.kavishdevar.librepods.presentation.screens.apple.LongPress
+import me.kavishdevar.librepods.presentation.screens.apple.StemPressScreen
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.presentation.screens.apple.MicrophoneSettingsRoute
 import me.kavishdevar.librepods.presentation.screens.apple.OverlaySettingsRoute
 import me.kavishdevar.librepods.presentation.screens.apple.ProxConnectSettingsRoute
@@ -147,6 +149,7 @@ fun RenderScreenContent(
                 navigateToHearingAid = { navigate(Screen.HearingAid(screen.macAddress)) },
                 navigateToLeftLongPress = { navigate(Screen.LongPress(screen.macAddress, left)) },
                 navigateToRightLongPress = { navigate(Screen.LongPress(screen.macAddress, right)) },
+                navigateToStemPress = { type -> navigate(Screen.StemPress(screen.macAddress, type.name)) },
                 navigateToPurchase = ::navigateToPurchase,
                 navigateToEqualizer = { navigate(Screen.Equalizer(screen.macAddress)) },
                 navigateToHeadTracking = { navigate(Screen.HeadTracking(screen.macAddress)) },
@@ -329,6 +332,20 @@ fun RenderScreenContent(
             )
             EqualizerRoute(
                 viewModel = appleViewModel,
+                navigateBack = navigateBack
+            )
+        }
+
+        is Screen.StemPress -> {
+            val device = devices[screen.macAddress] as? AppleDevice ?: return
+            val factory = createAppleViewModelFactory(device, appDataRepository, recordingRepository, heartRateRepository)
+            val appleViewModel: AppleViewModel = viewModel(
+                key = "${screen.macAddress.value}:${device.connectionNumber}",
+                factory = factory
+            )
+            StemPressScreen(
+                viewModel = appleViewModel,
+                pressType = StemPressType.valueOf(screen.press),
                 navigateBack = navigateBack
             )
         }
