@@ -671,6 +671,18 @@ class AACPManager(private val device: AppleDevice) {
 
     fun setSensorServiceReportInterval(sensorServiceType: SensorServiceType, interval: Duration): Boolean = rtBuddyManager.setSensorServiceReportInterval(sensorServiceType, interval)
 
+    /** Raw-ID version for exploring sensor services the schema doesn't name (roadmap #8). */
+    fun setSensorServiceReportInterval(serviceId: Int, interval: Duration): Boolean = rtBuddyManager.setSensorServiceReportInterval(serviceId, interval)
+
+    fun requestSensorDescriptors(): Boolean = rtBuddyManager.requestAllDescriptors()
+
+    /**
+     * While true, every sensor message is logged in full under the "SensorProbe" tag, stream
+     * samples included. Descriptors, acks and settings are always logged; they are rare.
+     */
+    @Volatile
+    var sensorProbeLogging: Boolean = false
+
     fun sendRename(name: String): Boolean {
         val packet = RenamePacket.create(name)
 
@@ -1147,7 +1159,36 @@ class AACPManager(private val device: AppleDevice) {
         return capabilities
     }
 
+    private fun logSensorProbe(data: SensorDataWX) {
+        fun hex(bytes: com.google.protobuf.ByteString): String = bytes.toByteArray().toHexString()
+        when {
+            data.hasSensorDescriptor() -> Log.i(
+                "SensorProbe",
+                "descriptor service=${data.sensorDescriptor.serviceValue}(${data.sensorDescriptor.service}) " +
+                    "len=${data.sensorDescriptor.sensorDescriptor.size()} data=${hex(data.sensorDescriptor.sensorDescriptor)}"
+            )
+            data.hasStartAck() -> Log.i("SensorProbe", "start_ack service=${data.startAck.serviceValue}(${data.startAck.service})")
+            data.hasCommandAck() -> Log.i("SensorProbe", "command_ack service=${data.commandAck.serviceValue}(${data.commandAck.service})")
+            data.hasServiceSettings() -> Log.i(
+                "SensorProbe",
+                "settings service=${data.serviceSettings.serviceValue}(${data.serviceSettings.service}) " +
+                    "setting=${data.serviceSettings.setting} config=${hex(data.serviceSettings.configuration)}"
+            )
+            data.hasCommand() -> if (sensorProbeLogging) Log.i(
+                "SensorProbe",
+                "sample service=${data.command.serviceValue}(${data.command.service}) " +
+                    "len=${data.command.payload.size()} data=${hex(data.command.payload)}"
+            )
+            !data.anotherSensorStream.isEmpty -> Log.i(
+                "SensorProbe",
+                "another_stream log_type=${data.logType} len=${data.anotherSensorStream.size()} data=${hex(data.anotherSensorStream)}"
+            )
+            else -> Log.i("SensorProbe", "other ${data.toString().replace('\n', ' ').take(300)}")
+        }
+    }
+
     private fun handleSensorData(data: SensorDataWX) {
+        logSensorProbe(data)
         if (data.hasCommand()) {
             when (data.command.service) {
                 SensorServiceType.ACTIVITY,

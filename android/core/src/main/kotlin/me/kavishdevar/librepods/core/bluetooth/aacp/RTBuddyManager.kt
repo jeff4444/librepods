@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.protobuf.ByteString
 import me.kavishdevar.librepods.core.bluetooth.aacp.packet.AACPPacket
 import me.kavishdevar.librepods.core.bluetooth.aacp.packet.RTBuddyPacket
+import me.kavishdevar.librepods.core.bluetooth.aacp.rtbuddy.proto.RequestAllDescriptors
 import me.kavishdevar.librepods.core.bluetooth.aacp.rtbuddy.proto.SensorDataWX
 import me.kavishdevar.librepods.core.bluetooth.aacp.rtbuddy.proto.SensorServiceSetting
 import me.kavishdevar.librepods.core.bluetooth.aacp.rtbuddy.proto.SensorServiceType
@@ -84,6 +85,31 @@ class RTBuddyManager(
     fun setSensorServiceReportInterval(sensorServiceType: SensorServiceType, interval: Duration): Boolean = sendSensorServiceSetting(
         service = sensorServiceType,
         configuration = byteArrayOf(0x01) + interval.toMicrosUINT32LE()
+    )
+
+    /**
+     * Starts (or with a zero [interval] stops) the sensor service with this raw ID, including IDs
+     * the schema doesn't name. Used to explore what the AirPods can stream (roadmap #8).
+     */
+    fun setSensorServiceReportInterval(serviceId: Int, interval: Duration): Boolean {
+        val data = SensorDataWX.newBuilder()
+            .setServiceSettings(
+                SensorServiceSetting.newBuilder()
+                    .setServiceValue(serviceId)
+                    .setSetting(2)
+                    .setConfiguration(
+                        ByteString.copyFrom(byteArrayOf(0x01) + interval.toMicrosUINT32LE())
+                    )
+            )
+            .build()
+        return sendSensorData(data)
+    }
+
+    /** Asks the AirPods to describe every sensor service they have; each answers with a sensor_descriptor. */
+    fun requestAllDescriptors(): Boolean = sendSensorData(
+        SensorDataWX.newBuilder()
+            .setRequestAllDescriptors(RequestAllDescriptors.getDefaultInstance())
+            .build()
     )
 }
 

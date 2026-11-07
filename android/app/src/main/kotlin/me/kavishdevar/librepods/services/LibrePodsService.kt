@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.AppleEvent
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
 import me.kavishdevar.librepods.BuildConfig
@@ -92,6 +93,7 @@ private const val TAG = "LibrePodsService"
 private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAND"
 private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
 private const val DEBUG_WATCH_CASE = "me.kavishdevar.librepods.DEBUG_WATCH_CASE"
+private const val DEBUG_SENSORS = "me.kavishdevar.librepods.DEBUG_SENSORS"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -223,10 +225,68 @@ class LibrePodsService: Service() {
         }
     }
 
+    // Debug builds only (roadmap #8): explore the AirPods' sensor services. Everything that comes
+    // back is logged under the "SensorProbe" tag.
+    //   list the sensors:  --es op descriptors
+    //   start one:         --es op start --ei service 11 --ei interval_ms 50
+    //   stop one:          --es op stop --ei service 11
+    //   sweep:             --es op sweep --es services 1,2,11,12 --ei seconds 4 --ei interval_ms 50
+    //   sample logging:    --es op log --ez on true
+    // e.g. adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SENSORS --es op descriptors -p me.kavishdevar.librepods.dev2
+    private var sensorSweepJob: Job? = null
+
+    private fun debugSensors(intent: Intent) {
+        val device = _devices.value.values.filterIsInstance<AppleDevice>()
+            .firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+        if (device == null) {
+            Log.w("SensorProbe", "no connected AirPods")
+            return
+        }
+        val aacp = device.aacp
+        val interval = intent.getIntExtra("interval_ms", 50).milliseconds
+        when (val op = intent.getStringExtra("op")) {
+            "descriptors" -> Log.i("SensorProbe", "requesting descriptors, sent: ${aacp.requestSensorDescriptors()}")
+            "start" -> {
+                val service = intent.getIntExtra("service", -1)
+                aacp.sensorProbeLogging = true
+                Log.i("SensorProbe", "start service=$service every $interval, sent: ${aacp.setSensorServiceReportInterval(service, interval)}")
+            }
+            "stop" -> {
+                val service = intent.getIntExtra("service", -1)
+                Log.i("SensorProbe", "stop service=$service, sent: ${aacp.setSensorServiceReportInterval(service, Duration.ZERO)}")
+            }
+            "log" -> {
+                aacp.sensorProbeLogging = intent.getBooleanExtra("on", true)
+                Log.i("SensorProbe", "sample logging ${aacp.sensorProbeLogging}")
+            }
+            "sweep" -> {
+                val services = intent.getStringExtra("services")?.split(",")?.mapNotNull { it.trim().toIntOrNull() }.orEmpty()
+                val seconds = intent.getIntExtra("seconds", 4)
+                sensorSweepJob?.cancel()
+                sensorSweepJob = serviceCoroutineScope.launch {
+                    aacp.sensorProbeLogging = true
+                    for (service in services) {
+                        Log.i("SensorProbe", "sweep start service=$service every $interval, sent: ${aacp.setSensorServiceReportInterval(service, interval)}")
+                        delay(seconds.seconds)
+                        Log.i("SensorProbe", "sweep stop service=$service, sent: ${aacp.setSensorServiceReportInterval(service, Duration.ZERO)}")
+                        delay(1.seconds)
+                    }
+                    aacp.sensorProbeLogging = false
+                    Log.i("SensorProbe", "sweep done")
+                }
+            }
+            else -> Log.w("SensorProbe", "unknown op $op")
+        }
+    }
+
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == DEBUG_WATCH_CASE) {
                 debugWatchCase(intent.getIntExtra("seconds", 60))
+                return
+            }
+            if (intent.action == DEBUG_SENSORS) {
+                debugSensors(intent)
                 return
             }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
@@ -408,6 +468,7 @@ class LibrePodsService: Service() {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
+                addAction(DEBUG_SENSORS)
             }, RECEIVER_EXPORTED)
         }
 
