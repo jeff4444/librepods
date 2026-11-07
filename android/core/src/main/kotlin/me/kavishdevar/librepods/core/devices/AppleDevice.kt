@@ -28,7 +28,6 @@ import me.kavishdevar.librepods.core.data.StemAction
 import me.kavishdevar.librepods.core.data.StemPressBud
 import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.BuddyState
-import me.kavishdevar.librepods.core.data.apple.SignalReading
 import me.kavishdevar.librepods.core.data.audio.MicrophoneFrame
 import me.kavishdevar.librepods.core.data.audio.MicrophoneState
 import me.kavishdevar.librepods.core.data.recording.Recording
@@ -68,15 +67,6 @@ class AppleDevice(
         extraBufferCapacity = 64
     )
     val microphoneFrames = _microphoneFrames.asSharedFlow()
-
-    // Signal strength of every advert seen from these AirPods, for the hot/cold finder. Readings
-    // arrive several times a second while the screen is on; nothing keeps them.
-    private val _signalReadings = MutableSharedFlow<SignalReading>(extraBufferCapacity = 64)
-    val signalReadings = _signalReadings.asSharedFlow()
-
-    internal fun reportSignal(reading: SignalReading) {
-        _signalReadings.tryEmit(reading)
-    }
 
     private val _connectionNumber = MutableStateFlow(0)
     override val connectionNumber = _connectionNumber.asStateFlow()

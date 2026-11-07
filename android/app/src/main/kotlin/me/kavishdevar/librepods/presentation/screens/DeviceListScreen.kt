@@ -90,8 +90,7 @@ fun DeviceListScreen(
     devices: Map<MacAddress, Device<*, *, *>>,
     navigateToAppSettings: () -> Unit,
     navigateToDevice: (MacAddress) -> Unit,
-    navigateToHeartRateScreen: (MacAddress) -> Unit,
-    navigateToFind: (MacAddress) -> Unit = {}
+    navigateToHeartRateScreen: (MacAddress) -> Unit
 ) {
     val design = LocalDesign.current
     val scrollState = rememberScrollState()
@@ -499,18 +498,6 @@ fun DeviceListScreen(
                         },
                         orientation = StyledListItemOrientation.Vertical
                     )
-
-                    // The finder works from Bluetooth adverts, so it is offered whether or not the
-                    // AirPods are connected; lost AirPods usually aren't.
-                    if (device is AppleDevice) {
-                        StyledList {
-                            styledListItem(
-                                contentText = stringResource(R.string.find_title),
-                                supportingText = stringResource(R.string.find_list_description),
-                                onClick = { navigateToFind(macAddress) }
-                            )
-                        }
-                    }
 
                     if (connectionState == ConnectionState.CONNECTED) {
                         when (deviceState) {

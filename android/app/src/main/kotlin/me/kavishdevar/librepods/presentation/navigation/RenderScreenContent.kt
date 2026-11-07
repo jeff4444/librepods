@@ -31,7 +31,6 @@ import me.kavishdevar.librepods.presentation.screens.apple.HearingProtectionScre
 import me.kavishdevar.librepods.presentation.screens.apple.HeartRateRoute
 import me.kavishdevar.librepods.presentation.screens.apple.LongPress
 import me.kavishdevar.librepods.presentation.screens.apple.StemPressScreen
-import me.kavishdevar.librepods.presentation.screens.apple.FindScreen
 import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.presentation.screens.apple.MicrophoneSettingsRoute
 import me.kavishdevar.librepods.presentation.screens.apple.OverlaySettingsRoute
@@ -125,12 +124,6 @@ fun RenderScreenContent(
                 navigateToHeartRateScreen = { macAddress ->
                     when (devices[macAddress]) {
                         is AppleDevice -> navigate(Screen.HeartRate(macAddress))
-                        else -> {}
-                    }
-                },
-                navigateToFind = { macAddress ->
-                    when (devices[macAddress]) {
-                        is AppleDevice -> navigate(Screen.Find(macAddress))
                         else -> {}
                     }
                 }
@@ -339,14 +332,6 @@ fun RenderScreenContent(
             )
             EqualizerRoute(
                 viewModel = appleViewModel,
-                navigateBack = navigateBack
-            )
-        }
-
-        is Screen.Find -> {
-            val device = devices[screen.macAddress] as? AppleDevice ?: return
-            FindScreen(
-                device = device,
                 navigateBack = navigateBack
             )
         }

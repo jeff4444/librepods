@@ -16,10 +16,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.MutableStateFlow
-import me.kavishdevar.librepods.core.data.apple.SignalSource
-import me.kavishdevar.librepods.core.data.apple.SignalReading
 import me.kavishdevar.librepods.core.bluetooth.MacAddress
 import me.kavishdevar.librepods.core.bluetooth.verifyRPA
 import me.kavishdevar.librepods.core.data.apple.AccessoryState
@@ -56,13 +52,6 @@ class BLEManager(
 ) {
     companion object {
         private const val TAG = "BLEManager"
-
-        /**
-         * Set while a screen needs every advert as soon as it arrives, such as the hot/cold
-         * finder. The scan then delivers results one by one instead of in batches: in a walk test
-         * the batched scan passed on only about half of the case's adverts.
-         */
-        val unbatched = MutableStateFlow(false)
     }
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -80,13 +69,7 @@ class BLEManager(
 
     init {
         startTimeoutChecker()
-        scope.launch {
-            unbatched.drop(1).collect { restartScan() }
-        }
     }
-
-    private val effectiveReportDelay: Long
-        get() = if (unbatched.value) 0L else reportDelay
 
     private val timeoutDuration = 5.seconds
 
@@ -156,7 +139,7 @@ class BLEManager(
             .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
-            .setReportDelay(effectiveReportDelay)
+            .setReportDelay(reportDelay)
             .build()
 
         val budsFilter = ScanFilter.Builder()
@@ -177,7 +160,7 @@ class BLEManager(
 
         try {
             bleScanner.startScan(listOf(budsFilter, chargingCaseFilter), scanSettings, scanCallback)
-            Log.i(TAG, "started BLE scan: mode=${effectiveScanMode} (screen on: $screenOn), delay=${effectiveReportDelay}")
+            Log.i(TAG, "started BLE scan: mode=${effectiveScanMode} (screen on: $screenOn), delay=${reportDelay}")
         } catch (e: Exception) {
             if (e.message?.contains("too frequently") == true) {
                 scope.launch {
@@ -189,11 +172,9 @@ class BLEManager(
             }
         }
 
-        if (effectiveReportDelay <= 0L) return
-
         flushJob = scope.launch {
             while (isActive) {
-                delay(effectiveReportDelay.milliseconds)
+                delay(reportDelay.milliseconds)
                 try {
                     bleScanner.flushPendingScanResults(scanCallback)
                 } catch (e: Exception) {
@@ -248,13 +229,13 @@ class BLEManager(
         val manufacturerData = result.scanRecord?.getManufacturerSpecificData(0x004C)?: return
 
 
-        if (handleAppleCaseAdvertisement(macAddress, manufacturerData, result.rssi)) {
+        if (handleAppleCaseAdvertisement(macAddress, manufacturerData)) {
             return
         }
 
         val deviceMac = resolveDeviceMac(macAddress)
         if (deviceMac != null) {
-            handleResolvedAppleBudsAdvertisement(deviceMac, manufacturerData, result.rssi)
+            handleResolvedAppleBudsAdvertisement(deviceMac, manufacturerData)
             return
         }
 
@@ -291,24 +272,9 @@ class BLEManager(
     @Suppress("unused", "UnusedVariable")
     private fun handleResolvedAppleBudsAdvertisement(
         publicMac: MacAddress,
-        data: ByteArray,
-        rssi: Int
+        data: ByteArray
     ) {
         lastSeenMap[publicMac] = System.currentTimeMillis()
-
-        // The status byte is sent in the clear: bit 5 says whether the left bud is primary, and the
-        // primary bud sends the advert.
-        if (data.size > 5) {
-            val primaryIsLeft = ((data[5].toInt() shr 5) and 0x01) == 1
-            (getDevices()[publicMac] as? AppleDevice)?.reportSignal(
-                SignalReading(
-                    source = SignalSource.BUDS,
-                    rssi = rssi,
-                    timeMillis = System.currentTimeMillis(),
-                    bud = if (primaryIsLeft) DeviceComponent.LEFT else DeviceComponent.RIGHT
-                )
-            )
-        }
         val encrypted = data.copyOfRange(data.size - 16, data.size)
 
         val plaintext = try {
@@ -467,7 +433,7 @@ class BLEManager(
         }
     }
 
-    private fun handleAppleCaseAdvertisement(caseMac: MacAddress, data: ByteArray, rssi: Int): Boolean {
+    private fun handleAppleCaseAdvertisement(caseMac: MacAddress, data: ByteArray): Boolean {
         var offset = 0
         while (offset + 2 <= data.size) {
             val kind = data[offset].toInt() and 0xFF
@@ -492,14 +458,6 @@ class BLEManager(
                     }
 
                     if (!isValidCasePlaintext(plaintext)) continue
-
-                    (getDevices()[publicMac] as? AppleDevice)?.reportSignal(
-                        SignalReading(
-                            source = SignalSource.CASE,
-                            rssi = rssi,
-                            timeMillis = System.currentTimeMillis()
-                        )
-                    )
 
                     val oldCaseMac = caseAddressByPublicMac[publicMac]?.firstOrNull()
                     if (oldCaseMac != caseMac) {
