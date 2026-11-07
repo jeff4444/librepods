@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.AppleEvent
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
+import me.kavishdevar.librepods.BuildConfig
 import me.kavishdevar.librepods.LibrePodsApplication
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.audio.EldDecoder
@@ -82,6 +83,8 @@ import kotlin.time.Duration
 import kotlin.time.toJavaInstant
 
 private const val TAG = "LibrePodsService"
+private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAND"
+private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -145,6 +148,26 @@ class LibrePodsService: Service() {
     }
 
     private val stemPressHandler by lazy { StemPressHandler(this) }
+
+    // Debug builds only: show the island or the case card on demand, through the same code a real
+    // connection or lid opening uses, for the first known AirPods.
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SHOW_ISLAND -p me.kavishdevar.librepods.dev2
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SHOW_CARD -p me.kavishdevar.librepods.dev2
+    private val debugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
+            when (intent.action) {
+                DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
+                DEBUG_SHOW_CARD -> proximityCardWindow.show(
+                    name = device.metadata.value.name,
+                    batteries = device.state.value.battery,
+                    spec = AirPodsSpecs.getSpec(device.metadata.value.model),
+                    onConnect = { device.connect() },
+                    airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
+                )
+            }
+        }
+    }
 
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -306,6 +329,12 @@ class LibrePodsService: Service() {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }, RECEIVER_NOT_EXPORTED)
+        if (BuildConfig.DEBUG) {
+            registerReceiver(debugReceiver, IntentFilter().apply {
+                addAction(DEBUG_SHOW_ISLAND)
+                addAction(DEBUG_SHOW_CARD)
+            }, RECEIVER_EXPORTED)
+        }
 
         MediaController.initialize(
             audioManager = getSystemService(AudioManager::class.java),
@@ -375,6 +404,7 @@ class LibrePodsService: Service() {
     override fun onDestroy() {
         healthConnectHeartRateWriter.flush()
         runCatching { unregisterReceiver(screenStateReceiver) }
+        if (BuildConfig.DEBUG) runCatching { unregisterReceiver(debugReceiver) }
         unregisterBluetoothReceivers()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")

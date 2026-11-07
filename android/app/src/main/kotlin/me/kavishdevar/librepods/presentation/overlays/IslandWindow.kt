@@ -253,6 +253,9 @@ class IslandWindow(
     }
 
     private fun updateWindowParams(state: IslandState) {
+        // Keep the open size while the island animates closed: a window shrinking to wrap content
+        // under the animation made the pill jump and clip as it closed. The view is removed after.
+        if (state == IslandState.CLOSE) return
         if (composeView?.parent != null) {
             val params = createLayoutParams(state)
             windowManager.updateViewLayout(composeView, params)
@@ -335,7 +338,11 @@ class IslandWindow(
                         islandSettings = resolvedIslandSettings(currentAppSettings.islandSettings),
                         islandState = islandState,
 
-                        openApp = { openApp() },
+                        // Opening the app is the island's job done: close it (or go compact).
+                        openApp = {
+                            openApp()
+                            if (appSettings.islandSettings.keepCompactVisible) changeState(IslandState.COMPACT) else close()
+                        },
                         changeState = { state, updateBefore ->
                             if (updateBefore) updateWindowParams(state)
                             Log.d("Island", "Changing state: $islandState -> $state")
