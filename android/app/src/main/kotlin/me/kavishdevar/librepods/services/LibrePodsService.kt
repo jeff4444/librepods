@@ -10,6 +10,10 @@ import android.app.Service
 import android.appwidget.AppWidgetManager
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanSettings
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanCallback
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -78,6 +82,8 @@ import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
 import me.kavishdevar.librepods.presentation.widgets.BatteryWidget
 import me.kavishdevar.librepods.utils.MediaController
 import me.kavishdevar.librepods.utils.calculateLevel
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 import kotlin.collections.getOrNull
 import kotlin.time.Duration
 import kotlin.time.toJavaInstant
@@ -85,6 +91,7 @@ import kotlin.time.toJavaInstant
 private const val TAG = "LibrePodsService"
 private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAND"
 private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
+private const val DEBUG_WATCH_CASE = "me.kavishdevar.librepods.DEBUG_WATCH_CASE"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -153,8 +160,75 @@ class LibrePodsService: Service() {
     // connection or lid opening uses, for the first known AirPods.
     //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SHOW_ISLAND -p me.kavishdevar.librepods.dev2
     //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SHOW_CARD -p me.kavishdevar.librepods.dev2
+    // Debug builds only (roadmap #6): log every case and buds proximity advert for a while, raw and
+    // decrypted with the AirPods' encryption key, to see which bytes change when the case is
+    // shaken, tilted, opened or its button pressed. Logs "CaseWatch" lines. The scan delivers each
+    // advert as it arrives, unlike the batched scan the app normally runs.
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 -p me.kavishdevar.librepods.dev2
+    @SuppressLint("MissingPermission")
+    private fun debugWatchCase(seconds: Int) {
+        val scanner = getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
+        fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
+        fun decrypt(block: ByteArray): String = encKeyMap.values.joinToString(",") { key ->
+            try {
+                val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"))
+                hex(cipher.doFinal(block))
+            } catch (_: Exception) {
+                "?"
+            }
+        }
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val data = result.scanRecord?.getManufacturerSpecificData(0x004C) ?: return
+                if (data.size < 19 || data[0] != 0x07.toByte()) return
+                val kind = when (data[2].toInt() and 0xFF) {
+                    0x06 -> "case"
+                    0x01 -> "buds"
+                    else -> "other%02x".format(data[2])
+                }
+                // Case adverts carry the encrypted block right after the 0x06 subtype; buds adverts
+                // carry it in their last 16 bytes.
+                val block = if (kind == "case") data.copyOfRange(3, 19) else data.copyOfRange(data.size - 16, data.size)
+                Log.i(
+                    "CaseWatch",
+                    "$kind ${result.device.address} rssi=${result.rssi} raw=${hex(data)} plain=${decrypt(block)}"
+                )
+            }
+        }
+        val filters = listOf(0x06, 0x01).map { subtype ->
+            ScanFilter.Builder()
+                .setManufacturerData(
+                    0x004C,
+                    byteArrayOf(0x07, 0x00, subtype.toByte()),
+                    byteArrayOf(0xFF.toByte(), 0x00, 0xFF.toByte())
+                )
+                .build()
+        }
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .build()
+        try {
+            scanner.startScan(filters, settings, callback)
+            Log.i("CaseWatch", "watching for $seconds s, keys: ${encKeyMap.size}")
+        } catch (e: Exception) {
+            Log.e("CaseWatch", "couldn't start the scan", e)
+            return
+        }
+        serviceCoroutineScope.launch {
+            delay(seconds.seconds)
+            runCatching { scanner.stopScan(callback) }
+            Log.i("CaseWatch", "watch done")
+        }
+    }
+
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == DEBUG_WATCH_CASE) {
+                debugWatchCase(intent.getIntExtra("seconds", 60))
+                return
+            }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
@@ -333,6 +407,7 @@ class LibrePodsService: Service() {
             registerReceiver(debugReceiver, IntentFilter().apply {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_SHOW_CARD)
+                addAction(DEBUG_WATCH_CASE)
             }, RECEIVER_EXPORTED)
         }
 
