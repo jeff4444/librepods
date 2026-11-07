@@ -34,10 +34,12 @@ import me.kavishdevar.librepods.LibrePodsApplication
 import me.kavishdevar.librepods.R
 import kotlin.time.Duration.Companion.seconds
 
+// Our local FOSS build: advanced features are always unlocked. The sponsor link still opens the
+// developer's GitHub Sponsors page.
 class FOSSBillingProvider(context: Context): BillingProvider {
     private val appDataRepository = (context.applicationContext as LibrePodsApplication).appDataRepository
 
-    private val _isPremium = MutableStateFlow(appDataRepository.state.value.isPremium)
+    private val _isPremium = MutableStateFlow(true)
     override val isPremium: StateFlow<Boolean> = _isPremium
 
     private val _price = MutableStateFlow(context.getString(R.string.name_your_own_price))
@@ -65,7 +67,10 @@ class FOSSBillingProvider(context: Context): BillingProvider {
     }
 
     override fun queryPurchases() {
-        _isPremium.value = appDataRepository.state.value.isPremium
+        _isPremium.value = true
+        if (!appDataRepository.state.value.isPremium) {
+            appDataRepository.updateState { it.copy(isPremium = true) }
+        }
     }
 
     override fun restorePurchases() {
