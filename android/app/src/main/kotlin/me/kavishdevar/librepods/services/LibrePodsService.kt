@@ -20,10 +20,8 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.Binder
-import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
-import android.os.ext.SdkExtensions
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.telecom.VideoProfile
@@ -34,8 +32,6 @@ import android.view.View
 import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.HeartRateRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,7 +75,6 @@ import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
 import me.kavishdevar.librepods.presentation.widgets.BatteryWidget
 import me.kavishdevar.librepods.utils.MediaController
 import me.kavishdevar.librepods.utils.calculateLevel
-import java.time.ZoneOffset
 import kotlin.collections.getOrNull
 import kotlin.time.Duration
 import kotlin.time.toJavaInstant
@@ -145,6 +140,10 @@ class LibrePodsService: Service() {
 
     private val healthConnectClient by lazy {
         (application as LibrePodsApplication).healthConnectClient
+    }
+
+    private val healthConnectHeartRateWriter by lazy {
+        HealthConnectHeartRateWriter(context = this, client = { healthConnectClient })
     }
 
     private val islandWindow: IslandWindow by lazy {
@@ -340,6 +339,7 @@ class LibrePodsService: Service() {
     }
 
     override fun onDestroy() {
+        healthConnectHeartRateWriter.flush()
         unregisterBluetoothReceivers()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")
@@ -1398,43 +1398,7 @@ class LibrePodsService: Service() {
             }
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            if (SdkExtensions.getExtensionVersion(Build.VERSION_CODES.UPSIDE_DOWN_CAKE) >= 7) {
-                if (checkSelfPermission(HealthPermission.getWritePermission(HeartRateRecord::class)) != PackageManager.PERMISSION_GRANTED) return@launch
-                val healthConnectHeartRateSample = HeartRateRecord.Sample(
-                    time = heartRateSample.timestamp.toJavaInstant(),
-                    beatsPerMinute = heartRateSample.bpm.toLong()
-                )
-
-                val zoneOffset =
-                    ZoneOffset.systemDefault().rules.getOffset(heartRateSample.timestamp.toJavaInstant())
-
-                val heartRateRecord = HeartRateRecord(
-                    startTime = (heartRateSample.timestamp - interval).toJavaInstant(),
-                    endTime = heartRateSample.timestamp.toJavaInstant(),
-                    startZoneOffset = zoneOffset,
-                    endZoneOffset = zoneOffset,
-                    samples = listOf(healthConnectHeartRateSample),
-                    metadata = androidx.health.connect.client.records.metadata.Metadata.autoRecorded(
-                        device = androidx.health.connect.client.records.metadata.Device(type = androidx.health.connect.client.records.metadata.Device.TYPE_HEARABLE)
-                    )
-                )
-
-                if (healthConnectClient != null) {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            healthConnectClient!!.insertRecords(listOf(heartRateRecord))
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error inserting heart rate record", e)
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "Health Connect client not available")
-                }
-            } else {
-                Log.d(TAG, "U SDK Extension <7")
-            }
-        }
+        healthConnectHeartRateWriter.add(heartRateSample, interval)
     }
 
     // TODO: Shizuku
