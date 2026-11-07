@@ -106,6 +106,8 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
             versionNameSuffix = "-debug"
+            // Its own app ID, so it installs beside release builds and our v1 debug build (.dev)
+            applicationIdSuffix = ".dev2"
             defaultConfig {
                 minSdk = 33
             }

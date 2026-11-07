@@ -1481,7 +1481,7 @@ class LibrePodsService: Service() {
             metadata.manufacturer.toByteArray()
         )
         shizuku.setMetadata(
-            macAddress, BluetoothMetadata.METADATA_COMPANION_APP, "me.kavishdevar.librepods".toByteArray()
+            macAddress, BluetoothMetadata.METADATA_COMPANION_APP, packageName.toByteArray()
         )
         shizuku.setMetadata(
             macAddress,
