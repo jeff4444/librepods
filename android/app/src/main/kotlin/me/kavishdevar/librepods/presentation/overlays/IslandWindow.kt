@@ -25,6 +25,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
@@ -44,6 +45,8 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import me.kavishdevar.librepods.data.app.resolved
+import me.kavishdevar.librepods.data.app.IslandSettings
 import me.kavishdevar.librepods.data.app.Design
 import me.kavishdevar.librepods.database.app.AppSettingsEntity
 import me.kavishdevar.librepods.presentation.design.LibrePodsTheme
@@ -227,8 +230,12 @@ class IslandWindow(
             setupComposeView()
         }
 
+        // Size the window for the state the island opens in, not the one it is leaving: an
+        // expanded island in a window sized for a closed one is cut off at the sides.
+        val targetState = forcedState?: if (appSettings.islandSettings.enableExpanded) IslandState.EXPANDED else IslandState.COMPACT
+
         if (composeView?.parent == null) {
-            val params = createLayoutParams(islandState)
+            val params = createLayoutParams(targetState)
             try {
                 lifecycleOwner?.start()
                 windowManager.addView(composeView, params)
@@ -236,9 +243,11 @@ class IslandWindow(
             } catch (e: Exception) {
                 Log.e("IslandWindow", "Error adding overlay view: $e")
             }
+        } else {
+            updateWindowParams(targetState)
         }
 
-        islandState = forcedState?: if (appSettings.islandSettings.enableExpanded) IslandState.EXPANDED else IslandState.COMPACT
+        islandState = targetState
 
         if (!keepOpen) resetTimer()
     }
@@ -250,14 +259,27 @@ class IslandWindow(
         }
     }
 
+    private fun resolvedIslandSettings(settings: IslandSettings): IslandSettings {
+        val metrics = windowManager.currentWindowMetrics
+        return settings.resolved(
+            density = context.resources.displayMetrics.density,
+            screenWidthPx = metrics.bounds.width(),
+            statusBarHeightPx = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
+        )
+    }
+
     private fun createLayoutParams(state: IslandState = islandState): WindowManager.LayoutParams {
         val windowType = if (context is android.accessibilityservice.AccessibilityService) {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         }
+        val islandSettings = resolvedIslandSettings(appSettings.islandSettings)
         return WindowManager.LayoutParams(
-            if (state == IslandState.EXPANDED) appSettings.islandSettings.expandedWidth.toInt()
+            // Room for the opening spring's overshoot and the press scale, within the screen.
+            if (state == IslandState.EXPANDED) {
+                (islandSettings.expandedWidth * 1.08f).toInt().coerceAtMost(windowManager.currentWindowMetrics.bounds.width())
+            }
             else WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
@@ -268,8 +290,8 @@ class IslandWindow(
             PixelFormat.TRANSPARENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = appSettings.islandSettings.offsetX.roundToInt()
-            y = appSettings.islandSettings.offsetY.roundToInt()
+            x = islandSettings.offsetX.roundToInt()
+            y = islandSettings.offsetY.roundToInt()
 
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
@@ -310,7 +332,7 @@ class IslandWindow(
                         reversed = reversed,
                         otherDeviceName = otherDeviceName,
 
-                        islandSettings = currentAppSettings.islandSettings,
+                        islandSettings = resolvedIslandSettings(currentAppSettings.islandSettings),
                         islandState = islandState,
 
                         openApp = { openApp() },

@@ -5,6 +5,10 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -94,15 +98,30 @@ fun IslandContent(
 ) {
     val density = LocalDensity.current
 
-    val animWidth = remember { Animatable(0f) }
-    val animHeight = remember { Animatable(islandSettings.compactHeight) }
-    val animRadius = remember { Animatable(0f) }
+    // The island grows out of a smaller pill (30% of its width, 55% of its height) with a slight
+    // overshoot, and shrinks back into one as it fades when it closes.
+    val openWidth = if (islandState == IslandState.COMPACT) islandSettings.compactWidth else islandSettings.expandedWidth
+    val openHeight = if (islandState == IslandState.COMPACT) islandSettings.compactHeight else islandSettings.expandedHeight
+    val animWidth = remember { Animatable(openWidth * COLLAPSED_WIDTH) }
+    val animHeight = remember { Animatable(openHeight * COLLAPSED_HEIGHT) }
+    val animRadius = remember { Animatable(openHeight * COLLAPSED_HEIGHT / 2f) }
     val animBorderWidth = remember { Animatable(0f) }
+    val contentAlpha = remember { Animatable(0f) }
 
-    val springSpec = spring<Float>(
-        dampingRatio = if (islandState == IslandState.CLOSE) Spring.DampingRatioNoBouncy else Spring.DampingRatioNoBouncy,
-        stiffness = Spring.StiffnessLow
-    )
+    val springSpec: AnimationSpec<Float> = if (islandState == IslandState.CLOSE) {
+        tween(durationMillis = CLOSE_MS, easing = FastOutLinearInEasing)
+    } else {
+        spring(dampingRatio = 0.72f, stiffness = 420f)
+    }
+
+    LaunchedEffect(islandState) {
+        if (islandState == IslandState.CLOSE) {
+            contentAlpha.animateTo(0f, tween(CLOSE_MS / 2))
+        } else if (contentAlpha.value < 1f) {
+            delay(110)
+            contentAlpha.animateTo(1f, tween(200))
+        }
+    }
 
     LaunchedEffect(
         islandState,
@@ -118,19 +137,20 @@ fun IslandContent(
         val (targetW, targetH) = when (islandState) {
             IslandState.EXPANDED -> islandSettings.expandedWidth to islandSettings.expandedHeight
             IslandState.COMPACT -> islandSettings.compactWidth to islandSettings.compactHeight
-            IslandState.CLOSE -> 0f to islandSettings.compactHeight
+            IslandState.CLOSE -> animWidth.value * COLLAPSED_WIDTH to animHeight.value * COLLAPSED_HEIGHT
         }
 
         val targetRadius = when (islandState) {
             IslandState.EXPANDED -> islandSettings.expandedBorderRadius
             IslandState.COMPACT -> islandSettings.compactBorderRadius
-            IslandState.CLOSE -> islandSettings.compactBorderRadius
+            IslandState.CLOSE -> animHeight.value * COLLAPSED_HEIGHT / 2f
         }
 
         val targetBorderWidth = when (islandState) {
             IslandState.EXPANDED -> islandSettings.expandedBorderWidth
             IslandState.COMPACT -> islandSettings.compactBorderWidth
-            IslandState.CLOSE -> islandSettings.compactBorderWidth
+            // No outline left behind while the pill fades away.
+            IslandState.CLOSE -> 0f
         }
 
         val wJob = launch { animWidth.animateTo(targetW, springSpec) }
@@ -154,9 +174,11 @@ fun IslandContent(
     val heightDp = with(density) { animHeight.value.coerceAtLeast(1f).toDp() * (1f + scale.value * if (islandState == IslandState.EXPANDED) 0.01f else 0.05f) }
     val borderWidthDp = with(density) { animBorderWidth.value.toDp() }
 
+    // A 64 dp pill needs a tighter padding than the old 115 dp default to fit its image and ring.
+    val expandedPadding = if (islandSettings.expandedHeight < 90f * density.density) 10f else 16f
     val padding = animateFloatAsState(
         targetValue = when (islandState) {
-            IslandState.EXPANDED -> 16f
+            IslandState.EXPANDED -> expandedPadding
             IslandState.COMPACT -> 8f
             else -> 0f
         },
@@ -171,7 +193,7 @@ fun IslandContent(
             IslandState.COMPACT -> Color.Black
             IslandState.CLOSE -> backgroundColor.copy(alpha = 0f)
         },
-        animationSpec = tween(100)
+        animationSpec = if (islandState == IslandState.CLOSE) tween(CLOSE_MS / 2, delayMillis = CLOSE_MS / 2) else tween(100)
     )
 
     val textColor = if (islandSettings.expandedBackgroundColor is OverlayBackgroundColor.Default) Color.White else contentColorFor(backgroundColor)
@@ -224,13 +246,30 @@ fun IslandContent(
                         }
                     }
                 }
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { _, dragAmount ->
-                        if (dragAmount > 0) changeState(IslandState.EXPANDED, true)
-                        else changeState(
-                            if (islandSettings.keepCompactVisible) IslandState.COMPACT else IslandState.CLOSE,
-                            true
-                        )
+                .pointerInput(islandState, islandSettings.keepCompactVisible) {
+                    // Swipe up past DISMISS_DRAG to dismiss; pull down past OPEN_DRAG to expand a
+                    // compact island or open the app from an expanded one.
+                    var total = 0f
+                    var handled = false
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            total = 0f
+                            handled = false
+                        }
+                    ) { _, dragAmount ->
+                        total += dragAmount
+                        if (handled) return@detectVerticalDragGestures
+                        if (total < -DISMISS_DRAG.toPx()) {
+                            handled = true
+                            changeState(
+                                if (islandSettings.keepCompactVisible) IslandState.COMPACT else IslandState.CLOSE,
+                                true
+                            )
+                        } else if (total > OPEN_DRAG.toPx()) {
+                            handled = true
+                            if (islandState == IslandState.COMPACT) changeState(IslandState.EXPANDED, true)
+                            else openApp()
+                        }
                     }
                 }
                 .padding(padding.value.dp),
@@ -240,6 +279,7 @@ fun IslandContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .graphicsLayer { alpha = contentAlpha.value }
                     .pointerInput(islandState) {
                         detectTapGestures(
                             onPress = {
@@ -328,6 +368,7 @@ fun IslandContent(
                                 text = typeText,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontSize = islandSettings.fontSize.sp * 0.65f,
+                                lineHeight = islandSettings.fontSize.sp * 0.65f * 1.25f,
                                 fontWeight = FontWeight.SemiBold,
                                 color = textColor.copy(0.6f),
                             )
@@ -337,6 +378,8 @@ fun IslandContent(
                             text = name,
                             style = MaterialTheme.typography.titleLarge,
                             fontSize = islandSettings.fontSize.sp,
+                            // The theme's title line height (36 sp) doesn't fit a 64 dp pill.
+                            lineHeight = islandSettings.fontSize.sp * 1.2f,
                             color = textColor,
                             maxLines = 1,
                             softWrap = false,
@@ -475,3 +518,9 @@ fun IslandContentPreview(){
         onAdaptiveStrengthChanged = {}
     )
 }
+
+private const val COLLAPSED_WIDTH = 0.3f
+private const val COLLAPSED_HEIGHT = 0.55f
+private const val CLOSE_MS = 240
+private val DISMISS_DRAG = 20.dp
+private val OPEN_DRAG = 48.dp
