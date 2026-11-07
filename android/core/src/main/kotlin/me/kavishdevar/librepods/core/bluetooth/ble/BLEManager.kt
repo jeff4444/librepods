@@ -16,6 +16,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import me.kavishdevar.librepods.core.data.apple.SignalSource
+import me.kavishdevar.librepods.core.data.apple.SignalReading
 import me.kavishdevar.librepods.core.bluetooth.MacAddress
 import me.kavishdevar.librepods.core.bluetooth.verifyRPA
 import me.kavishdevar.librepods.core.data.apple.AccessoryState
@@ -229,13 +231,13 @@ class BLEManager(
         val manufacturerData = result.scanRecord?.getManufacturerSpecificData(0x004C)?: return
 
 
-        if (handleAppleCaseAdvertisement(macAddress, manufacturerData)) {
+        if (handleAppleCaseAdvertisement(macAddress, manufacturerData, result.rssi)) {
             return
         }
 
         val deviceMac = resolveDeviceMac(macAddress)
         if (deviceMac != null) {
-            handleResolvedAppleBudsAdvertisement(deviceMac, manufacturerData)
+            handleResolvedAppleBudsAdvertisement(deviceMac, manufacturerData, result.rssi)
             return
         }
 
@@ -272,9 +274,24 @@ class BLEManager(
     @Suppress("unused", "UnusedVariable")
     private fun handleResolvedAppleBudsAdvertisement(
         publicMac: MacAddress,
-        data: ByteArray
+        data: ByteArray,
+        rssi: Int
     ) {
         lastSeenMap[publicMac] = System.currentTimeMillis()
+
+        // The status byte is sent in the clear: bit 5 says whether the left bud is primary, and the
+        // primary bud sends the advert.
+        if (data.size > 5) {
+            val primaryIsLeft = ((data[5].toInt() shr 5) and 0x01) == 1
+            (getDevices()[publicMac] as? AppleDevice)?.reportSignal(
+                SignalReading(
+                    source = SignalSource.BUDS,
+                    rssi = rssi,
+                    timeMillis = System.currentTimeMillis(),
+                    bud = if (primaryIsLeft) DeviceComponent.LEFT else DeviceComponent.RIGHT
+                )
+            )
+        }
         val encrypted = data.copyOfRange(data.size - 16, data.size)
 
         val plaintext = try {
@@ -433,7 +450,7 @@ class BLEManager(
         }
     }
 
-    private fun handleAppleCaseAdvertisement(caseMac: MacAddress, data: ByteArray): Boolean {
+    private fun handleAppleCaseAdvertisement(caseMac: MacAddress, data: ByteArray, rssi: Int): Boolean {
         var offset = 0
         while (offset + 2 <= data.size) {
             val kind = data[offset].toInt() and 0xFF
@@ -458,6 +475,14 @@ class BLEManager(
                     }
 
                     if (!isValidCasePlaintext(plaintext)) continue
+
+                    (getDevices()[publicMac] as? AppleDevice)?.reportSignal(
+                        SignalReading(
+                            source = SignalSource.CASE,
+                            rssi = rssi,
+                            timeMillis = System.currentTimeMillis()
+                        )
+                    )
 
                     val oldCaseMac = caseAddressByPublicMac[publicMac]?.firstOrNull()
                     if (oldCaseMac != caseMac) {

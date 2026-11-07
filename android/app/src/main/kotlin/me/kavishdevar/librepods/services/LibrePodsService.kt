@@ -10,6 +10,10 @@ import android.app.Service
 import android.appwidget.AppWidgetManager
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -85,6 +89,7 @@ import kotlin.time.toJavaInstant
 private const val TAG = "LibrePodsService"
 private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAND"
 private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
+private const val DEBUG_SCAN_APPLE = "me.kavishdevar.librepods.DEBUG_SCAN_APPLE"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -155,6 +160,10 @@ class LibrePodsService: Service() {
     //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SHOW_CARD -p me.kavishdevar.librepods.dev2
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == DEBUG_SCAN_APPLE) {
+                debugScanAppleAdverts(intent.getIntExtra("seconds", 30))
+                return
+            }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
@@ -166,6 +175,43 @@ class LibrePodsService: Service() {
                     airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                 )
             }
+        }
+    }
+
+    // Debug builds only: log every Apple advert in range for a while, to learn what AirPods and
+    // their case send in each state (roadmap #5). Logs "AppleAdverts" lines:
+    // address, Apple message type, length, RSSI and the manufacturer data in hex.
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SCAN_APPLE --ei seconds 30 -p me.kavishdevar.librepods.dev2
+    @SuppressLint("MissingPermission")
+    private fun debugScanAppleAdverts(seconds: Int) {
+        val scanner = getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val data = result.scanRecord?.getManufacturerSpecificData(0x004C) ?: return
+                val type = if (data.isNotEmpty()) "%02x".format(data[0]) else "--"
+                Log.i(
+                    "AppleAdverts",
+                    "${result.device.address} type=$type len=${data.size} rssi=${result.rssi} " +
+                        data.joinToString("") { "%02x".format(it) }
+                )
+            }
+        }
+        val filter = ScanFilter.Builder().setManufacturerData(0x004C, byteArrayOf(), byteArrayOf()).build()
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .build()
+        try {
+            scanner.startScan(listOf(filter), settings, callback)
+            Log.i("AppleAdverts", "scanning for $seconds s")
+        } catch (e: Exception) {
+            Log.e("AppleAdverts", "couldn't start the scan", e)
+            return
+        }
+        serviceCoroutineScope.launch {
+            delay(seconds.seconds)
+            runCatching { scanner.stopScan(callback) }
+            Log.i("AppleAdverts", "scan done")
         }
     }
 
@@ -333,6 +379,7 @@ class LibrePodsService: Service() {
             registerReceiver(debugReceiver, IntentFilter().apply {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_SHOW_CARD)
+                addAction(DEBUG_SCAN_APPLE)
             }, RECEIVER_EXPORTED)
         }
 
