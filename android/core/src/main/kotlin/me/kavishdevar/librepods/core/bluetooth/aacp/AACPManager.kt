@@ -599,6 +599,11 @@ class AACPManager(private val device: AppleDevice) {
                     )
                 }
                 Log.d(TAG, "Unhandled messageOpcode received: 0x${opcode.toHexString()}")
+                // Unknown messages may carry streams we haven't decoded yet (roadmap #8).
+                Log.i(
+                    "SensorProbe",
+                    "unknown opcode=0x${opcode.toHexString()} len=${packet.payload.size} data=${packet.payload.toHexString()}"
+                )
             }
         }
     }
@@ -675,6 +680,9 @@ class AACPManager(private val device: AppleDevice) {
     fun setSensorServiceReportInterval(serviceId: Int, interval: Duration): Boolean = rtBuddyManager.setSensorServiceReportInterval(serviceId, interval)
 
     fun requestSensorDescriptors(): Boolean = rtBuddyManager.requestAllDescriptors()
+
+    fun sendRawSensorSetting(serviceId: Int, setting: Int, configuration: ByteArray): Boolean =
+        rtBuddyManager.sendRawSensorSetting(serviceId, setting, configuration)
 
     /**
      * While true, every sensor message is logged in full under the "SensorProbe" tag, stream

@@ -231,6 +231,7 @@ class LibrePodsService: Service() {
     //   start one:         --es op start --ei service 11 --ei interval_ms 50
     //   stop one:          --es op stop --ei service 11
     //   sweep:             --es op sweep --es services 1,2,11,12 --ei seconds 4 --ei interval_ms 50
+    //   raw setting:       --es op raw --ei service 17 --ei setting 1 --es config 0140420f00
     //   sample logging:    --es op log --ez on true
     // e.g. adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SENSORS --es op descriptors -p me.kavishdevar.librepods.dev2
     private var sensorSweepJob: Job? = null
@@ -254,6 +255,13 @@ class LibrePodsService: Service() {
             "stop" -> {
                 val service = intent.getIntExtra("service", -1)
                 Log.i("SensorProbe", "stop service=$service, sent: ${aacp.setSensorServiceReportInterval(service, Duration.ZERO)}")
+            }
+            "raw" -> {
+                val service = intent.getIntExtra("service", -1)
+                val setting = intent.getIntExtra("setting", 2)
+                val config = intent.getStringExtra("config").orEmpty().chunked(2).mapNotNull { it.toIntOrNull(16)?.toByte() }.toByteArray()
+                aacp.sensorProbeLogging = true
+                Log.i("SensorProbe", "raw service=$service setting=$setting config=${config.toHexString()}, sent: ${aacp.sendRawSensorSetting(service, setting, config)}")
             }
             "log" -> {
                 aacp.sensorProbeLogging = intent.getBooleanExtra("on", true)

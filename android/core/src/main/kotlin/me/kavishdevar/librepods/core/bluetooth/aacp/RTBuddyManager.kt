@@ -105,6 +105,18 @@ class RTBuddyManager(
         return sendSensorData(data)
     }
 
+    /** Sends any sensor service setting with any configuration bytes (roadmap #8 exploration). */
+    fun sendRawSensorSetting(serviceId: Int, setting: Int, configuration: ByteArray): Boolean = sendSensorData(
+        SensorDataWX.newBuilder()
+            .setServiceSettings(
+                SensorServiceSetting.newBuilder()
+                    .setServiceValue(serviceId)
+                    .setSetting(setting)
+                    .setConfiguration(ByteString.copyFrom(configuration))
+            )
+            .build()
+    )
+
     /** Asks the AirPods to describe every sensor service they have; each answers with a sensor_descriptor. */
     fun requestAllDescriptors(): Boolean = sendSensorData(
         SensorDataWX.newBuilder()
