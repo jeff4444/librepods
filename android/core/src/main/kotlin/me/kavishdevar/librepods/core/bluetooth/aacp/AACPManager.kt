@@ -77,9 +77,18 @@ class AACPManager(private val device: AppleDevice) {
 
     private suspend fun sendDelayedInitPackets() {
         socket?.let {
+            // Give up after 10 s, or once this socket has been closed or replaced: when the
+            // AirPods drop the link right after connecting (lid opened with the buds inside), this
+            // used to wait forever, and another waiter piled up on every lid opening.
+            var waited = 0
             while (!it.isConnected) {
+                if (socket !== it || waited >= 20) {
+                    Log.i(TAG, "giving up on init packets: link not connected")
+                    return
+                }
                 Log.i(TAG, "waiting for connection...")
                 delay(500.milliseconds)
+                waited++
             }
             Log.i(TAG, "initializing connection")
 

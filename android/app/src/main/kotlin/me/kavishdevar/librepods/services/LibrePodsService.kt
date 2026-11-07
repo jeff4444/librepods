@@ -166,9 +166,9 @@ class LibrePodsService: Service() {
     // decrypted with the AirPods' encryption key, to see which bytes change when the case is
     // shaken, tilted, opened or its button pressed. Logs "CaseWatch" lines. The scan delivers each
     // advert as it arrives, unlike the batched scan the app normally runs.
-    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 -p me.kavishdevar.librepods.dev2
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 [--ez any true] -p me.kavishdevar.librepods.dev2
     @SuppressLint("MissingPermission")
-    private fun debugWatchCase(seconds: Int) {
+    private fun debugWatchCase(seconds: Int, anyApple: Boolean = false) {
         val scanner = getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
         fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
         fun decrypt(block: ByteArray): String = encKeyMap.values.joinToString(",") { key ->
@@ -198,7 +198,11 @@ class LibrePodsService: Service() {
                 )
             }
         }
-        val filters = listOf(0x06, 0x01).map { subtype ->
+        // With "any", match every Apple advert and pick ours out in the callback: some Bluetooth
+        // chips may not apply the masked byte filter the app normally uses.
+        val filters = if (anyApple) {
+            listOf(ScanFilter.Builder().setManufacturerData(0x004C, byteArrayOf(), byteArrayOf()).build())
+        } else listOf(0x06, 0x01).map { subtype ->
             ScanFilter.Builder()
                 .setManufacturerData(
                     0x004C,
@@ -213,7 +217,7 @@ class LibrePodsService: Service() {
             .build()
         try {
             scanner.startScan(filters, settings, callback)
-            Log.i("CaseWatch", "watching for $seconds s, keys: ${encKeyMap.size}")
+            Log.i("CaseWatch", "watching for $seconds s, keys: ${encKeyMap.size}, any Apple advert: $anyApple")
         } catch (e: Exception) {
             Log.e("CaseWatch", "couldn't start the scan", e)
             return
@@ -290,7 +294,7 @@ class LibrePodsService: Service() {
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == DEBUG_WATCH_CASE) {
-                debugWatchCase(intent.getIntExtra("seconds", 60))
+                debugWatchCase(intent.getIntExtra("seconds", 60), intent.getBooleanExtra("any", false))
                 return
             }
             if (intent.action == DEBUG_SENSORS) {
@@ -348,6 +352,33 @@ class LibrePodsService: Service() {
     // declining and hanging up work as usual whatever the presses are mapped to.
     @Volatile
     private var isOnCall = false
+
+    // Ear states last acted on per device, from the live connection only (reset on disconnect).
+    private val lastEarState = mutableMapOf<MacAddress, Set<DeviceComponentState>>()
+
+    // Hands the AirPods' keys to the scanner. They arrive over the control link the first time the
+    // AirPods connect; the scanner used to get them only when the service started, so after a
+    // fresh setup it couldn't read the AirPods' broadcasts (no lid, no case card) until a restart.
+    private fun giveKeysToScanner(mac: MacAddress, magicKeys: Map<MagicKeyType, ByteArray>) {
+        magicKeys[MagicKeyType.IRK]?.let {
+            irkMap[mac] = it
+            bleManager.updateIrkMap(irkMap)
+        }
+        magicKeys[MagicKeyType.ENC_KEY]?.let {
+            encKeyMap[mac] = it
+            bleManager.updateEncKeyMap(encKeyMap)
+        }
+    }
+
+    /** Whether both buds are known to be in the case: reported in it, or charging. */
+    private fun budsInCase(state: AppleState): Boolean {
+        fun inCase(bud: DeviceComponent, battery: BatteryComponent): Boolean =
+            state.componentState.find { it.component == bud }?.status == ComponentStatus.IN_CASE ||
+                state.battery.find { it.component == battery }?.status.let {
+                    it == BatteryStatus.CHARGING || it == BatteryStatus.OPTIMIZED_CHARGING
+                }
+        return inCase(DeviceComponent.LEFT, BatteryComponent.LEFT) && inCase(DeviceComponent.RIGHT, BatteryComponent.RIGHT)
+    }
 
     private fun applyStemPressForwarding(device: AppleDevice) {
         if (device.connectionState.value != ConnectionState.CONNECTED) return
@@ -430,6 +461,11 @@ class LibrePodsService: Service() {
 
         for ((device, accessoryState) in candidates) {
             val settings = device.settings.value
+
+            if (device is AppleDevice && budsInCase(device.state.value)) {
+                Log.d(TAG, "Not connecting ${device.macAddress.toRedactedString()} for $trigger: both buds are in the case")
+                continue
+            }
 
             val shouldConnect = when (trigger) {
                 "phone" -> when (accessoryState) {
@@ -592,6 +628,8 @@ class LibrePodsService: Service() {
                         TAG,
                         "Loaded metadata for device ${device.macAddress.toRedactedString()}: $metadata"
                     )
+
+                    giveKeysToScanner(device.macAddress, cache.magicKeys)
 
                     device.loadInitialState(
                         state = AppleState().copy(
@@ -790,8 +828,31 @@ class LibrePodsService: Service() {
                         // Let the connection's setup packets go first.
                         delay(2.seconds)
                         applyStemPressForwarding(device)
+
+                        // If the AirPods' ear report didn't differ from what their broadcasts said,
+                        // no change was seen: treat connecting as starting from "no bud in".
+                        val components = device.state.value.componentState
+                        if (lastEarState[device.macAddress] == null && components.isNotEmpty()) {
+                            lastEarState[device.macAddress] = components
+                            processComponentStateChange(
+                                device = device,
+                                previousComponentState = emptySet(),
+                                newComponentState = components,
+                                disconnectWhenNotWearing = device.settings.value.disconnectWhenNotWearing
+                            )
+                        }
+
+                        // Connected with no bud in an ear (lid opened with the buds inside): keep
+                        // the audio off, or Android routes media to the AirPods in the case.
+                        if (components.isNotEmpty() && earPresenceOf(components) == EarPresence.NONE &&
+                            device.settings.value.disconnectWhenNotWearing
+                        ) {
+                            Log.i(TAG, "connected with no bud in an ear, keeping audio off")
+                            device.disconnectAudio()
+                        }
                     }
                 }
+                if (state != ConnectionState.CONNECTED) lastEarState.remove(device.macAddress)
 
                 if (previousConnectionState == ConnectionState.DISCONNECTED && state == ConnectionState.AVAILABLE) {
                     when (device) {
@@ -799,8 +860,14 @@ class LibrePodsService: Service() {
                             val settings = device.settings.value
                             val state = device.state.value
                             if (settings.alwaysConnectWhenAccessoryDisconnected && System.currentTimeMillis() - state.lastDisconnected > 5_000) {
-                                Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, connecting")
-                                device.connect()
+                                if (budsInCase(state)) {
+                                    // Like an iPhone: wait for a bud to come out (handled where the
+                                    // ear state changes) rather than route audio to the case.
+                                    Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby with both buds in the case, not connecting yet")
+                                } else {
+                                    Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, connecting")
+                                    device.connect()
+                                }
                             }
                         }
                     }
@@ -845,6 +912,11 @@ class LibrePodsService: Service() {
                     }
                 }
 
+                if (state.magicKeys != previousState.magicKeys && state.magicKeys.isNotEmpty()) {
+                    Log.i(TAG, "got keys for ${device.macAddress.toRedactedString()}, passing them to the scanner")
+                    giveKeysToScanner(device.macAddress, state.magicKeys)
+                }
+
                 // Checked on its own, not as a branch of the when below: the lid usually opens in
                 // the same advert that changes the accessory state, and a when runs only one branch.
                 if (state.caseLidOpen != previousState.caseLidOpen) {
@@ -882,6 +954,49 @@ class LibrePodsService: Service() {
                             )
                         }
                     } else proximityCardWindow.close()
+                }
+
+                // On its own, not a branch of the when below, which runs only one branch per update
+                // and could drop an ear change that came with another change.
+                if (state.componentState != previousState.componentState) {
+                    Log.i(
+                        TAG,
+                        "component state changed for device ${device.macAddress.toRedactedString()}"
+                    )
+                    Log.d(TAG, "component state: ${state.componentState}")
+
+                    val earDetectionCtrlCmdValue =
+                        state.controlStates[ControlCommandIdentifier.EAR_DETECTION_CONFIG]
+                            ?: byteArrayOf(0x01.toByte())
+                    val earDetectionEnabled = earDetectionCtrlCmdValue[0] == 0x01.toByte() || deviceSettings.earDetectionEnabled // temporary, cache broken (?)
+
+                    if (device.connectionState.value == ConnectionState.CONNECTED) {
+                        // Act only on what the AirPods report over the live connection. States read
+                        // from their broadcasts while disconnected can say "in ear" for buds still in
+                        // the case, which connected audio and started playback in the case.
+                        val previousEarState = lastEarState[device.macAddress] ?: emptySet()
+                        lastEarState[device.macAddress] = state.componentState
+                        Log.d(TAG, "ear detection enabled: $earDetectionEnabled")
+                        if (earDetectionEnabled) {
+                            processComponentStateChange(
+                                device = device,
+                                previousComponentState = previousEarState,
+                                newComponentState = state.componentState,
+                                disconnectWhenNotWearing = deviceSettings.disconnectWhenNotWearing
+                            )
+                        }
+                    } else if (
+                        deviceSettings.alwaysConnectWhenAccessoryDisconnected &&
+                        device.connectionState.value == ConnectionState.AVAILABLE &&
+                        budsInCase(previousState) && !budsInCase(state)
+                    ) {
+                        // We hold off connecting while both buds are in the case; one just came out.
+                        Log.i(TAG, "a bud left the case of ${device.macAddress.toRedactedString()}, connecting")
+                        device.connect()
+                    }
+
+                    Log.d(TAG, "updating notification")
+                    updateDeviceNotification(device = device)
                 }
 
                 when {
@@ -982,35 +1097,6 @@ class LibrePodsService: Service() {
                                 || state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.OPTIMIZED_CHARGING
                             ) "1" else "0").toByteArray()
                         ) */
-                    }
-
-                    state.componentState != previousState.componentState -> {
-                        Log.i(
-                            TAG,
-                            "component state changed for device ${device.macAddress.toRedactedString()}"
-                        )
-                        Log.d(TAG, "component state: ${state.componentState}")
-
-                        val earDetectionCtrlCmdValue =
-                            state.controlStates[ControlCommandIdentifier.EAR_DETECTION_CONFIG]
-                                ?: byteArrayOf(0x01.toByte())
-                        Log.d(
-                            TAG,
-                            "ear detection control command value: ${earDetectionCtrlCmdValue.toHexString()}"
-                        )
-                        val earDetectionEnabled = earDetectionCtrlCmdValue[0] == 0x01.toByte() || deviceSettings.earDetectionEnabled // temporary, cache broken (?)
-                        Log.d(TAG, "ear detection enabled: $earDetectionEnabled")
-                        if (earDetectionEnabled) {
-                            processComponentStateChange(
-                                device = device,
-                                previousComponentState = previousState.componentState,
-                                newComponentState = state.componentState,
-                                disconnectWhenNotWearing = deviceSettings.disconnectWhenNotWearing
-                            )
-                        }
-
-                        Log.d(TAG, "updating notification")
-                        updateDeviceNotification(device = device)
                     }
 
                     state.controlStates != previousState.controlStates -> {

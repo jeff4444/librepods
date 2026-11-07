@@ -137,6 +137,11 @@ class IslandWindow(
                 composeView?.visibility = View.VISIBLE
             } catch (e: Exception) {
                 Log.e("IslandWindow", "Error adding overlay view: $e")
+                // Start over next time: a view whose window was never added would otherwise be
+                // reused with its lifecycle already running.
+                runCatching { lifecycleOwner?.stop() }
+                composeView = null
+                lifecycleOwner = null
             }
         }
     }
@@ -242,6 +247,11 @@ class IslandWindow(
                 composeView?.visibility = View.VISIBLE
             } catch (e: Exception) {
                 Log.e("IslandWindow", "Error adding overlay view: $e")
+                // Start over next time: a view whose window was never added would otherwise be
+                // reused with its lifecycle already running.
+                runCatching { lifecycleOwner?.stop() }
+                composeView = null
+                lifecycleOwner = null
             }
         } else {
             updateWindowParams(targetState)
@@ -415,8 +425,13 @@ private class IslandLifecycleOwner: LifecycleOwner, ViewModelStoreOwner, SavedSt
     override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
     override val viewModelStore: ViewModelStore get() = store
 
+    // Safe to call again: restoring saved state twice throws, which used to leave the window
+    // unable to show until the app restarted.
     fun start() {
-        savedStateRegistryController.performRestore(null)
+        if (lifecycle.currentState == Lifecycle.State.INITIALIZED) {
+            savedStateRegistryController.performRestore(null)
+        }
+        if (lifecycle.currentState == Lifecycle.State.DESTROYED) return
         lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
