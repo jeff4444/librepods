@@ -305,7 +305,7 @@ class LibrePodsService: Service() {
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
                 DEBUG_SHOW_CARD -> proximityCardWindow.show(
-                    name = device.metadata.value.name,
+                    name = displayName(device),
                     batteries = device.state.value.battery,
                     spec = AirPodsSpecs.getSpec(device.metadata.value.model),
                     onConnect = { device.connect() },
@@ -368,6 +368,21 @@ class LibrePodsService: Service() {
             encKeyMap[mac] = it
             bleManager.updateEncKeyMap(encKeyMap)
         }
+    }
+
+    /**
+     * The name to show for these AirPods. Their own name arrives a few seconds after they connect,
+     * and after a fresh setup it may not be saved yet, so the card and island used to show an empty
+     * name; fall back to the name Android has for the paired device, then to "AirPods".
+     */
+    @SuppressLint("MissingPermission")
+    private fun displayName(device: Device<*, *, *>): String {
+        val own = (device as? AppleDevice)?.metadata?.value?.name.orEmpty()
+        if (own.isNotBlank()) return own
+        return runCatching { device.bluetoothDevice.alias ?: device.bluetoothDevice.name }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: "AirPods"
     }
 
     /** Whether both buds are known to be in the case: reported in it, or charging. */
@@ -933,7 +948,7 @@ class LibrePodsService: Service() {
 
                             if (state.componentState.all { it.status == ComponentStatus.IN_CASE } || (leftInCase && rightInCase)) {
                                 proximityCardWindow.show(
-                                    name = device.metadata.value.name,
+                                    name = displayName(device),
                                     batteries = state.battery,
                                     spec = AirPodsSpecs.getSpec(device.metadata.value.model),
                                     onConnect = {
@@ -944,7 +959,7 @@ class LibrePodsService: Service() {
                             } else proximityCardWindow.close()
                         } else {
                             proximityCardWindow.show(
-                                name = device.metadata.value.name,
+                                name = displayName(device),
                                 batteries = state.battery,
                                 spec = AirPodsSpecs.getSpec(device.metadata.value.model),
                                 onConnect = {
@@ -1319,7 +1334,7 @@ class LibrePodsService: Service() {
                     val batteryPercentage = leftBattery.coerceAtMost(rightBattery)
 
                     islandWindow.show(
-                        name = metadata.name,
+                        name = displayName(device),
                         batteryLevel = batteryPercentage,
                         type = type,
                         reversed = reversed,
@@ -1388,7 +1403,7 @@ class LibrePodsService: Service() {
                     val updatedNotificationBuilder =
                         NotificationCompat.Builder(this, "device_${device.macAddress}")
                             .setSmallIcon(R.drawable.ic_airpods)
-                            .setContentTitle(device.metadata.value.name)
+                            .setContentTitle(displayName(device))
                             .setContentText(device.state.value.battery.joinToString(" ") { "${it.component.name[0]}: ${it.level}%" })
                             .setContentIntent(pendingIntent)
                             .setCategory(Notification.CATEGORY_STATUS)
