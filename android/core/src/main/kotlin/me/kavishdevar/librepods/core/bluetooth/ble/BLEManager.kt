@@ -16,6 +16,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.MutableStateFlow
 import me.kavishdevar.librepods.core.data.apple.SignalSource
 import me.kavishdevar.librepods.core.data.apple.SignalReading
 import me.kavishdevar.librepods.core.bluetooth.MacAddress
@@ -54,6 +56,13 @@ class BLEManager(
 ) {
     companion object {
         private const val TAG = "BLEManager"
+
+        /**
+         * Set while a screen needs every advert as soon as it arrives, such as the hot/cold
+         * finder. The scan then delivers results one by one instead of in batches: in a walk test
+         * the batched scan passed on only about half of the case's adverts.
+         */
+        val unbatched = MutableStateFlow(false)
     }
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -71,7 +80,13 @@ class BLEManager(
 
     init {
         startTimeoutChecker()
+        scope.launch {
+            unbatched.drop(1).collect { restartScan() }
+        }
     }
+
+    private val effectiveReportDelay: Long
+        get() = if (unbatched.value) 0L else reportDelay
 
     private val timeoutDuration = 5.seconds
 
@@ -141,7 +156,7 @@ class BLEManager(
             .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
-            .setReportDelay(reportDelay)
+            .setReportDelay(effectiveReportDelay)
             .build()
 
         val budsFilter = ScanFilter.Builder()
@@ -162,7 +177,7 @@ class BLEManager(
 
         try {
             bleScanner.startScan(listOf(budsFilter, chargingCaseFilter), scanSettings, scanCallback)
-            Log.i(TAG, "started BLE scan: mode=${effectiveScanMode} (screen on: $screenOn), delay=${reportDelay}")
+            Log.i(TAG, "started BLE scan: mode=${effectiveScanMode} (screen on: $screenOn), delay=${effectiveReportDelay}")
         } catch (e: Exception) {
             if (e.message?.contains("too frequently") == true) {
                 scope.launch {
@@ -174,9 +189,11 @@ class BLEManager(
             }
         }
 
+        if (effectiveReportDelay <= 0L) return
+
         flushJob = scope.launch {
             while (isActive) {
-                delay(reportDelay.milliseconds)
+                delay(effectiveReportDelay.milliseconds)
                 try {
                     bleScanner.flushPendingScanResults(scanCallback)
                 } catch (e: Exception) {

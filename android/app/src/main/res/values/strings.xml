@@ -34,6 +34,7 @@
     <string name="find_warmer">Warmer</string>
     <string name="find_colder">Colder</string>
     <string name="find_steady">Steady</string>
+    <string name="find_heard_ago">heard %1$d s ago</string>
     <string name="find_via_left_bud">from the left bud</string>
     <string name="find_via_right_bud">from the right bud</string>
     <string name="find_adverts_per_second">%1$s/s</string>

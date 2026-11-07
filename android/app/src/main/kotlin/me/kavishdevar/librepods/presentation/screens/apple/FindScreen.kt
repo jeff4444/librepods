@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import me.kavishdevar.librepods.R
+import me.kavishdevar.librepods.core.bluetooth.ble.BLEManager
 import me.kavishdevar.librepods.core.data.apple.SignalSource
 import me.kavishdevar.librepods.core.devices.AppleDevice
 import me.kavishdevar.librepods.core.devices.DeviceComponent
@@ -63,15 +64,23 @@ import me.kavishdevar.librepods.presentation.components.primitives.StyledList
 import me.kavishdevar.librepods.presentation.components.primitives.StyledScaffold
 import me.kavishdevar.librepods.presentation.components.primitives.styledListItem
 import me.kavishdevar.librepods.presentation.components.primitives.styledToggle
+import kotlin.math.exp
 import kotlin.math.roundToInt
 
 private const val TAG = "FindScreen"
 
-// Smoothing for the raw readings, which jump by several dB from one advert to the next.
-private const val SMOOTHING = 0.25f
+// Smoothing for the raw readings, which jump by several dB from one advert to the next. It works
+// in time, not in readings: a reading after a long gap (a closed case advertises every 8-24 s)
+// counts almost fully, while readings arriving several times a second are averaged over ~1.5 s.
+private const val SMOOTHING_TIME_MS = 1_500f
 
-// A source counts as lost after this long without an advert.
-private const val LOST_AFTER_MS = 5_000L
+// A source counts as lost after this long without an advert, and as stale (shown dimmed, with its
+// age) after STALE_AFTER_MS.
+private const val LOST_AFTER_MS = 60_000L
+private const val STALE_AFTER_MS = 4_000L
+
+// Beeps stop when the source has been silent this long, rather than repeat an old reading.
+private const val BEEP_STALE_MS = 15_000L
 
 // The trend compares the smoothed signal now with this long ago, and needs this many dB of change.
 private const val TREND_WINDOW_MS = 2_000L
@@ -87,11 +96,16 @@ fun FindScreen(
     device: AppleDevice,
     navigateBack: (() -> Unit)?
 ) {
-    // The phone scans at full speed only while the screen is on.
+    // The phone scans at full speed only while the screen is on, and passes on every advert as it
+    // arrives only while this screen asks for it.
     val view = LocalView.current
     DisposableEffect(view) {
         view.keepScreenOn = true
-        onDispose { view.keepScreenOn = false }
+        BLEManager.unbatched.value = true
+        onDispose {
+            view.keepScreenOn = false
+            BLEManager.unbatched.value = false
+        }
     }
 
     val buds = remember { SignalTracker() }
@@ -130,7 +144,7 @@ fun FindScreen(
             while (true) {
                 val tracker = if (beepSource == SignalSource.BUDS) buds else case
                 val smoothed = tracker.smoothed
-                if (smoothed != null && System.currentTimeMillis() - tracker.lastSeen < LOST_AFTER_MS) {
+                if (smoothed != null && System.currentTimeMillis() - tracker.lastSeen < BEEP_STALE_MS) {
                     tone.startTone(ToneGenerator.TONE_PROP_BEEP, 60)
                     // About 1.4 s between beeps at the weakest signal, down to 0.15 s at the strongest.
                     delay((1400 - 1250 * strength(smoothed)).toLong())
@@ -213,6 +227,7 @@ private fun SignalCard(
     val smoothed = tracker.smoothed
     val age = now - tracker.lastSeen
     val lost = smoothed == null || age > LOST_AFTER_MS
+    val stale = !lost && age > STALE_AFTER_MS
 
     val headline = when {
         smoothed == null -> stringResource(R.string.find_searching)
@@ -247,7 +262,7 @@ private fun SignalCard(
                         text = headline,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (lost) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                        color = if (lost || stale) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                     )
 
                     Box(
@@ -263,7 +278,7 @@ private fun SignalCard(
                                 .fillMaxWidth(meter)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(
-                                    if (lost) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
+                                    if (lost || stale) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
                                 )
                         )
                     }
@@ -271,6 +286,7 @@ private fun SignalCard(
                     val parts = buildList {
                         smoothed?.let { add("${it.roundToInt()} dBm") }
                         trendText?.let { add(it) }
+                        if (stale) add(stringResource(R.string.find_heard_ago, (age / 1000).toInt()))
                         if (!lost) detail?.let { add(it) }
                         add(stringResource(R.string.find_adverts_per_second, tracker.ratePerSecond(now)))
                     }
@@ -308,11 +324,19 @@ private class SignalTracker {
     private val history = ArrayDeque<Pair<Long, Float>>()
 
     fun add(rssi: Int, timeMillis: Long) {
-        val next = smoothed?.let { it + SMOOTHING * (rssi - it) } ?: rssi.toFloat()
+        val previous = smoothed
+        val next = if (previous == null) {
+            rssi.toFloat()
+        } else {
+            val gap = (timeMillis - lastSeen).coerceAtLeast(0L)
+            val weight = 1f - exp(-gap / SMOOTHING_TIME_MS)
+            previous + weight * (rssi - previous)
+        }
         smoothed = next
         lastSeen = timeMillis
         history.addLast(timeMillis to next)
-        while (history.isNotEmpty() && timeMillis - history.first().first > 6_000) history.removeFirst()
+        // Long enough for a trend between two readings of a slow advert.
+        while (history.isNotEmpty() && timeMillis - history.first().first > 60_000) history.removeFirst()
         version++
     }
 
