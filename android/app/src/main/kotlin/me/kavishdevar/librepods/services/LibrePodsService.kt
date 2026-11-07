@@ -10,7 +10,6 @@ import android.app.Service
 import android.appwidget.AppWidgetManager
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -126,8 +125,8 @@ class LibrePodsService: Service() {
             context = this,
             scope = serviceCoroutineScope,
 
-            scanMode = ScanSettings.SCAN_MODE_BALANCED,
-            reportDelay = 500L,
+            scanMode = appDataRepository.settings.value.bleScanMode,
+            reportDelay = appDataRepository.settings.value.bleReportDelay,
 
             getDevices = { devices.value },
 
@@ -146,6 +145,12 @@ class LibrePodsService: Service() {
     }
 
     private val stemPressHandler by lazy { StemPressHandler(this) }
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            bleManager.setScreenOn(intent.action == Intent.ACTION_SCREEN_ON)
+        }
+    }
 
     private val healthConnectHeartRateWriter by lazy {
         HealthConnectHeartRateWriter(context = this, client = { healthConnectClient })
@@ -297,6 +302,10 @@ class LibrePodsService: Service() {
         loadDevices()
 
         bleManager.start()
+        registerReceiver(screenStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }, RECEIVER_NOT_EXPORTED)
 
         MediaController.initialize(
             audioManager = getSystemService(AudioManager::class.java),
@@ -365,6 +374,7 @@ class LibrePodsService: Service() {
 
     override fun onDestroy() {
         healthConnectHeartRateWriter.flush()
+        runCatching { unregisterReceiver(screenStateReceiver) }
         unregisterBluetoothReceivers()
         bleManager.stop()
         serviceCoroutineScope.cancel("Service stopped")
@@ -659,6 +669,45 @@ class LibrePodsService: Service() {
                     }
                 }
 
+                // Checked on its own, not as a branch of the when below: the lid usually opens in
+                // the same advert that changes the accessory state, and a when runs only one branch.
+                if (state.caseLidOpen != previousState.caseLidOpen) {
+                    Log.i(TAG, "case lid ${if (state.caseLidOpen) "opened" else "closed"} for ${device.macAddress.toRedactedString()}")
+                    if (state.caseLidOpen) {
+                        if (appDataRepository.settings.value.proximityCardSettings.requireBothBudsInCase) {
+                            val leftInCase = state.componentState.find { it.component == DeviceComponent.LEFT }?.status == ComponentStatus.IN_CASE ||
+                                state.battery.find { it.component == BatteryComponent.LEFT }?.status == BatteryStatus.CHARGING ||
+                                state.battery.find { it.component == BatteryComponent.LEFT }?.status == BatteryStatus.OPTIMIZED_CHARGING
+
+                            val rightInCase = state.componentState.find { it.component == DeviceComponent.RIGHT }?.status == ComponentStatus.IN_CASE ||
+                                state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.CHARGING ||
+                                state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.OPTIMIZED_CHARGING
+
+                            if (state.componentState.all { it.status == ComponentStatus.IN_CASE } || (leftInCase && rightInCase)) {
+                                proximityCardWindow.show(
+                                    name = device.metadata.value.name,
+                                    batteries = state.battery,
+                                    spec = AirPodsSpecs.getSpec(device.metadata.value.model),
+                                    onConnect = {
+                                        device.connect()
+                                    },
+                                    airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
+                                )
+                            } else proximityCardWindow.close()
+                        } else {
+                            proximityCardWindow.show(
+                                name = device.metadata.value.name,
+                                batteries = state.battery,
+                                spec = AirPodsSpecs.getSpec(device.metadata.value.model),
+                                onConnect = {
+                                    device.connect()
+                                },
+                                airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
+                            )
+                        }
+                    } else proximityCardWindow.close()
+                }
+
                 when {
                     state.state != previousState.state -> {
                         if (state.state == AccessoryState.Disconnected) {
@@ -672,41 +721,6 @@ class LibrePodsService: Service() {
                         }
                     }
 
-                    state.caseLidOpen != previousState.caseLidOpen -> {
-                        if (state.caseLidOpen) {
-                            if (appDataRepository.settings.value.proximityCardSettings.requireBothBudsInCase) {
-                                val leftInCase = state.componentState.find { it.component == DeviceComponent.LEFT }?.status == ComponentStatus.IN_CASE ||
-                                    state.battery.find { it.component == BatteryComponent.LEFT }?.status == BatteryStatus.CHARGING ||
-                                    state.battery.find { it.component == BatteryComponent.LEFT }?.status == BatteryStatus.OPTIMIZED_CHARGING
-
-                                val rightInCase = state.componentState.find { it.component == DeviceComponent.RIGHT }?.status == ComponentStatus.IN_CASE ||
-                                    state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.CHARGING ||
-                                    state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.OPTIMIZED_CHARGING
-
-                                if (state.componentState.all { it.status == ComponentStatus.IN_CASE } || (leftInCase && rightInCase)) {
-                                    proximityCardWindow.show(
-                                        name = device.metadata.value.name,
-                                        batteries = state.battery,
-                                        spec = AirPodsSpecs.getSpec(device.metadata.value.model),
-                                        onConnect = {
-                                            device.connect()
-                                        },
-                                        airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
-                                    )
-                                } else proximityCardWindow.close()
-                            } else {
-                                proximityCardWindow.show(
-                                    name = device.metadata.value.name,
-                                    batteries = state.battery,
-                                    spec = AirPodsSpecs.getSpec(device.metadata.value.model),
-                                    onConnect = {
-                                        device.connect()
-                                    },
-                                    airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
-                                )
-                            }
-                        } else proximityCardWindow.close()
-                    }
                     state.capabilities != previousState.capabilities -> {
                         Log.i(
                             TAG,

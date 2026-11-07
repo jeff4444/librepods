@@ -192,8 +192,8 @@ class ProximityCardWindow(
         val isTabletDevice = isTablet() && cardSettings.centerOnTablet
 
         return WindowManager.LayoutParams(
-            cardSettings.width.toInt(),
-            cardSettings.height.toInt(),
+            if (cardSettings.width <= 0f) WindowManager.LayoutParams.MATCH_PARENT else cardSettings.width.toInt(),
+            if (cardSettings.height <= 0f) WindowManager.LayoutParams.WRAP_CONTENT else cardSettings.height.toInt(),
             windowType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_SPLIT_TOUCH or

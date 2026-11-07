@@ -1,5 +1,6 @@
 package me.kavishdevar.librepods.core.bluetooth.ble
 
+import android.os.PowerManager
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -108,6 +109,24 @@ class BLEManager(
         }
     }
 
+    // While the screen is on, scan continuously so the case is seen the moment its lid opens and the
+    // card shows before the AirPods connect; with the screen off, use the configured mode.
+    private var screenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
+    private val effectiveScanMode: Int
+        get() = if (screenOn) ScanSettings.SCAN_MODE_LOW_LATENCY else scanMode
+
+    fun setScreenOn(on: Boolean) {
+        if (on == screenOn) return
+        val before = effectiveScanMode
+        screenOn = on
+        if (effectiveScanMode != before) restartScan()
+    }
+
+    private fun restartScan() {
+        stopScan()
+        start()
+    }
+
     fun start() {
         val bleScanner = bluetoothAdapter?.bluetoothLeScanner
         if (bleScanner == null) {
@@ -116,7 +135,7 @@ class BLEManager(
         }
 
         val scanSettings = ScanSettings.Builder()
-            .setScanMode(scanMode)
+            .setScanMode(effectiveScanMode)
             .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
@@ -141,7 +160,7 @@ class BLEManager(
 
         try {
             bleScanner.startScan(listOf(budsFilter, chargingCaseFilter), scanSettings, scanCallback)
-            Log.i(TAG, "started BLE scan: mode=${scanMode}, delay=${reportDelay}")
+            Log.i(TAG, "started BLE scan: mode=${effectiveScanMode} (screen on: $screenOn), delay=${reportDelay}")
         } catch (e: Exception) {
             if (e.message?.contains("too frequently") == true) {
                 scope.launch {
@@ -166,8 +185,13 @@ class BLEManager(
     }
 
     fun stop() {
-        flushJob?.cancel()
         connectionTimeoutJob?.cancel()
+        stopScan()
+    }
+
+    // Stops scanning but keeps the timeout checker, which only stop() ends.
+    private fun stopScan() {
+        flushJob?.cancel()
         val bleScanner = bluetoothAdapter?.bluetoothLeScanner ?: return
         try {
             bleScanner.stopScan(scanCallback)
@@ -188,15 +212,13 @@ class BLEManager(
     }
 
     fun updateScanMode(scanMode: Int) {
-        stop()
         this.scanMode = scanMode
-        start()
+        restartScan()
     }
 
     fun updateReportDelay(reportDelay: Long) {
-        stop()
         this.reportDelay = reportDelay
-        start()
+        restartScan()
     }
 
     private fun processScanResult(result: ScanResult) {

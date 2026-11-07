@@ -1,6 +1,11 @@
 package me.kavishdevar.librepods.presentation.overlays
 
 import android.annotation.SuppressLint
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.Layout
+import android.view.RoundedCorner
+import android.view.Display
+import android.hardware.display.DisplayManager
 import android.content.res.Configuration
 import android.graphics.SurfaceTexture
 import android.media.MediaMetadataRetriever
@@ -49,7 +54,6 @@ import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -150,16 +154,28 @@ fun ProximityCardContent(
 
     val density = LocalDensity.current
 
+    // A width or height of 0 and a negative radius mean automatic, the default: an iOS-style card
+    // across the screen, inset by CARD_INSET, as tall as its content, with corners concentric
+    // with the screen's.
+    val autoWidth = settings.width <= 0f
+    val autoHeight = settings.height <= 0f
     val widthDp = with(density) { settings.width.toDp() }
     val heightDp = with(density) { settings.height.toDp() }
-    val borderRadiusDp = with(density) { settings.borderRadius.toDp() }
+    val concentricRadius = rememberConcentricCardRadius(CARD_INSET)
+    val borderRadiusDp = if (settings.borderRadius < 0f) concentricRadius else with(density) { settings.borderRadius.toDp() }
 
     val shape = RoundedCornerShape(borderRadiusDp)
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = if (autoHeight) {
+            Modifier
+                .fillMaxWidth()
+                .padding(CARD_INSET)
+        } else {
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        },
         contentAlignment = Alignment.BottomCenter
     ) {
         AnimatedVisibility(
@@ -175,8 +191,8 @@ fun ProximityCardContent(
         ) {
             Surface(
                 modifier = Modifier
-                    .width(widthDp)
-                    .height(heightDp)
+                    .then(if (autoWidth) Modifier.fillMaxWidth() else Modifier.width(widthDp))
+                    .then(if (autoHeight) Modifier else Modifier.height(heightDp))
                     .offset { IntOffset(0, offsetY.value.roundToInt()) }
                     .draggable(
                         orientation = Orientation.Vertical,
@@ -211,7 +227,9 @@ fun ProximityCardContent(
                 shape = shape
             ) {
                 if (settings.showCloseButton){
-                    Box(Modifier.fillMaxSize()) {
+                    // Only as wide as the card: filling the height would stretch an automatic card
+                    // to the whole window.
+                    Box(if (autoHeight) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
                         Icon(
                             imageVector = LocalIcons.current.Close,
                             contentDescription = stringResource(R.string.hide_prox_card),
@@ -235,10 +253,16 @@ fun ProximityCardContent(
                     }
                 }
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(28.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                    modifier = if (autoHeight) {
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 22.dp, bottom = 26.dp)
+                    } else {
+                        Modifier
+                            .fillMaxSize()
+                            .padding(28.dp)
+                    },
+                    verticalArrangement = Arrangement.spacedBy(if (autoHeight) 14.dp else 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
@@ -247,21 +271,26 @@ fun ProximityCardContent(
                         color = textColor,
                         maxLines = 2,
                         softWrap = true,
-                        modifier = Modifier.padding(horizontal = 32.dp),
+                        modifier = Modifier.padding(horizontal = if (autoHeight) 56.dp else 32.dp),
                         textAlign = TextAlign.Center
                     )
 
                     Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
+                        modifier = if (autoHeight) {
+                            Modifier.fillMaxWidth()
+                        } else {
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        },
                         contentAlignment = Alignment.Center
                     ) {
                         if (settings.useVideo) {
                             VideoBatteryLayout(
                                 batteryList = batteries,
                                 videoResId = videoResId,
-                                surfaceColor = backgroundColor
+                                surfaceColor = backgroundColor,
+                                fitContent = autoHeight
                             )
                         } else {
                             BatteryView(
@@ -277,6 +306,7 @@ fun ProximityCardContent(
                         StyledButton(
                             onClick = onConnect,
                             modifier = Modifier
+                                .then(if (autoHeight) Modifier.padding(horizontal = 24.dp) else Modifier)
                                 .fillMaxWidth()
                                 .height(48.dp),
                             materialButtonStyle = MaterialButtonStyle.Outlined
@@ -298,22 +328,32 @@ fun ProximityCardContent(
 private fun VideoBatteryLayout(
     batteryList: Set<Battery>,
     @RawRes videoResId: Int,
-    surfaceColor: Color
+    surfaceColor: Color,
+    // Size to the video across the full width, with each battery centered under its object.
+    fitContent: Boolean = false
 ) {
     val headsetBattery = batteryList.find { it.component == BatteryComponent.HEADSET }
 
     Column(
-        modifier = Modifier
-            .widthIn(max = 350.dp)
-            .fillMaxWidth()
-            .fillMaxHeight(),
+        modifier = if (fitContent) {
+            Modifier.fillMaxWidth()
+        } else {
+            Modifier
+                .widthIn(max = 350.dp)
+                .fillMaxWidth()
+                .fillMaxHeight()
+        },
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(if (fitContent) 14.dp else 16.dp)
     ) {
         Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
+            modifier = if (fitContent) {
+                Modifier.fillMaxWidth()
+            } else {
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            },
             contentAlignment = Alignment.Center
         ) {
             LoopingVideoView(
@@ -335,16 +375,7 @@ private fun VideoBatteryLayout(
 
             val singleDisplayed = left != null && right != null && left.status == right.status && (left.level - right.level).absoluteValue < 3
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
+            val budsGroup: @Composable () -> Unit = {
                     if (singleDisplayed) {
                         BatteryIndicator(
                             battery = left,
@@ -375,19 +406,41 @@ private fun VideoBatteryLayout(
                             }
                         }
                     }
+            }
+            val caseGroup: @Composable () -> Unit = {
+                if (case != null) {
+                    BatteryIndicator(
+                        battery = case,
+                        surfaceColor = surfaceColor,
+                        showIcon = !singleDisplayed
+                    )
                 }
+            }
 
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center
+            if (fitContent) {
+                // In the video the buds sit at 28% of the width and the case at 71%.
+                CenteredAtFractions(
+                    fractions = listOf(0.28f, 0.71f),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    if (case != null) {
-                        BatteryIndicator(
-                            battery = case,
-                            surfaceColor = surfaceColor,
-                            showIcon = !singleDisplayed
-                        )
-                    }
+                    Box(contentAlignment = Alignment.Center) { budsGroup() }
+                    Box(contentAlignment = Alignment.Center) { caseGroup() }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) { budsGroup() }
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) { caseGroup() }
                 }
             }
         }
@@ -401,9 +454,8 @@ fun LoopingVideoView(
 ) {
     val context = LocalContext.current
     var isVideoReady by remember { mutableStateOf(false) }
-    var aspectRatio by remember { mutableFloatStateOf(16f / 9f) }
-
-    LaunchedEffect(videoResId) {
+    // Read the size before the first frame, so the card has its final height when it slides in.
+    val aspectRatio = remember(videoResId) {
         val retriever = MediaMetadataRetriever()
         try {
             val afd = context.resources.openRawResourceFd(videoResId)
@@ -411,10 +463,9 @@ fun LoopingVideoView(
             afd.close()
             val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloatOrNull()
             val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloatOrNull()
-            if (w != null && h != null && h > 0f) {
-                aspectRatio = w / h
-            }
+            if (w != null && h != null && h > 0f) w / h else 16f / 9f
         } catch (_: Exception) {
+            16f / 9f
         } finally {
             retriever.release()
         }
@@ -473,4 +524,44 @@ fun LoopingVideoView(
             }
         }
     )
+}
+
+private val CARD_INSET = 8.dp
+
+/** The card's corner radius that keeps an even gap to the screen's rounded corners. */
+@Composable
+private fun rememberConcentricCardRadius(inset: Dp): Dp {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    return remember(density) {
+        val display = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
+        val screenCornerPx = display?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0
+        with(density) { (screenCornerPx.toDp() - inset).coerceAtLeast(28.dp) }
+    }
+}
+
+/** Lays children out side by side, each centered at its fraction of the width. */
+@Composable
+private fun CenteredAtFractions(
+    fractions: List<Float>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val width = constraints.maxWidth
+        // Each child gets an equal share of the width, so one that fills its width still centers
+        // its content on its fraction.
+        val share = if (measurables.isEmpty()) width else width / measurables.size
+        val placeables = measurables.map {
+            it.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = share))
+        }
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        layout(width, height) {
+            placeables.forEachIndexed { index, placeable ->
+                val center = (fractions.getOrElse(index) { 0.5f } * width).roundToInt()
+                val x = (center - placeable.width / 2).coerceIn(0, (width - placeable.width).coerceAtLeast(0))
+                placeable.placeRelative(x, (height - placeable.height) / 2)
+            }
+        }
+    }
 }
