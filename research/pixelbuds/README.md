@@ -147,3 +147,26 @@ and sends read-only calls.
    in a snoop capture taken with head tracking on, and Maestro's HeadGesture stream.
 4. What do `DynamicServerConfigService.GetConfig/GetOverrides`, `pw.log.Logs` and
    `pw.file.FileSystem` return?
+
+## Read-only support in LibrePods (2026-11-08)
+
+Works with Google's Pixel Buds app uninstalled (Android's Bluetooth settings still show the buds'
+settings: that page uses another Google channel, not Maestro).
+
+- **Connection:** Pixel Buds Pro 2 connect when a bud leaves the case and disconnect as soon as it's
+  back, even with the lid open. So connecting is never "lid open"; it goes straight to the island.
+- **Lid:** the buds' Fast Pair beacon (service data 0xFE2C, *extended* advertising on 1M/2M: Android
+  only reports it to scans with `setLegacy(false)`) comes every few seconds with the lid closed and
+  9-10 a second while it's open, alongside a Find My Device frame (0xFEAA, frame 0x40). Addresses
+  rotate and the data is keyed to Google's account keys, so LibrePods can't prove the beacon is
+  this pair. `PixelBudsLidWatcher` takes a close (-55 dBm or stronger) burst of 3 within 1.5 s with
+  the 0xFEAA frame as the lid opening (measured: 0.2 s after the burst starts), and 3 s without one
+  as it closing. It scans only with the screen on and the buds bonded but not connected.
+- **Read over Maestro** once connected: firmware, serials, model and colour code, battery and
+  charging per part, placement, noise mode and other settings. Runtime info is subscribed from both
+  buds first.
+- **Art:** Google's Pro 2 renders per colour, Google's bud and case symbols, and the case card's
+  turntable rendered from Google's own 3D model (`turntable/`): Hazel buds, the case in the model's
+  own white finish.
+- The card used to close on a fast flick alone, so a system back swipe starting over it dismissed
+  it; now a flick has to have moved it 40 px.
