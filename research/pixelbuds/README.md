@@ -197,6 +197,21 @@ Google's EQ presets (low bass, bass, mid, treble, upper treble), from a tool des
 Default 0/0/0/0/0, Balanced -3.5/0.5/1/-1/2.5, Clarity -2/0/2/3/5, Heavy bass 5/3/0/0/0,
 Light bass -5/-1.5/0/0/0, Vocal boost -1/0/4/2/0.
 
+**Names from Google's app** (2026-11-08): its SettingValue schema (class `sbr`: 39 oneof fields;
+bool, enum, message, and field 17 a zigzag `sint32`) and its handlers (`gmt` "handleAllegroSetting",
+`gsw`, and the writers in `goj`/`cxn`/`hdi`/`hei`/`hci`/`gzd`) give: 3 setup finished, 6 setup mode,
+8 ANC accessibility mode, 9/10 noise mode with one/two buds (enums), 14 test mode (bool),
+18 last saved EQ, 27 case sounds ("case earcon", the chimes other than a bud returning), 28 bud
+return sound, 29 head gestures (enum, 1 off, 2 on; was 2), 34 "phone booth" (a call feature the
+app can switch on after a delay), 36 sleep detection (sleep mode feature), 37 Live Translate
+settings (message with an auto-ANC flag), 38 mic mute gesture (needs a Pixel ROM in Google's
+app). `WriteSetting` itself is a oneof of five families (fields 1-5); 4 is these settings.
+Still unnamed: 20, 23 (message), 24 and 26 (enums), 25, 30, 31 (message), 32 (written by the
+app's settings writer), 33, 35 (message), 39.
+
+Without Google's app, Android's Bluetooth settings page for the buds only offers a few options,
+so naming the rest by toggling needs Google's app back (and then LibrePods loses Maestro to it).
+
 Unnamed ids that answer (values on this pair): 3=1, 5=1, 6=0, 18=empty, 23=`{4: {1: 0}}`, 24=0,
 26=0, 27=1, 28=1, 29=2, 30=0, 31=`{1: 0f, 2: 0f, 3: 5}`, 32=1, 33=1, 34=0, 35=empty, 36=1, 37=empty,
 38 and up still to list. LibrePods logs every change (`setting N changed`), so toggling options
@@ -204,8 +219,9 @@ in Android's Pixel Buds settings page should name them.
 
 **Ear tip fit test** (`maestro_pw.EartipFitTest`, per bud on its own channel): write setting 14 = 1,
 wait 800 ms, set media volume to 53% of max (Google's `MaestroOtts__volume_ratio_lr`), play
-`raw/etft_03` (a 13.7 s sound), wait 800 ms, `SubscribeToResults` + `StartTest` (empty messages)
-on each bud. Results are `{1: fit float, 2: noise float}`; afterwards `EndTest` and setting 14 = 0.
+`raw/etft_03` (a 13.7 s sound), wait 800 ms, then on each bud `StartTest` and only then
+`SubscribeToResults` (empty messages; subscribing first ends the stream at once with status 9,
+FAILED_PRECONDITION). Results are `{1: fit float, 2: noise float}`; afterwards `EndTest` and setting 14 = 0.
 Google grades with flags `fit_test_good_criteria` 80, `fit_test_max_criteria` 200 and
 `noise_test_max_criteria` 40 (255 = no reading) into good / needs adjustment / change ear tip /
 noisy; the decompiled grading is garbled, so which way "fit" goes is still to confirm.

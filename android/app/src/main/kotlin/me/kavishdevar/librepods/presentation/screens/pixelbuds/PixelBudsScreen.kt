@@ -186,7 +186,24 @@ fun PixelBudsScreen(
                     flagToggle(device, state, PixelBudsSetting.MULTIPOINT, "Multipoint", "Stays connected to two devices at once")
                 }
 
-                HeadGestures(device)
+                HeadGestures(device, state)
+
+                StyledList(title = "Case sounds") {
+                    flagToggle(device, state, PixelBudsSetting.BUD_RETURN_SOUND, "Bud return sound", "Chimes when a bud goes back in the case")
+                    flagToggle(device, state, PixelBudsSetting.CASE_SOUNDS, "Other case sounds", "The case's other chimes")
+                }
+
+                StyledList(title = "Calls") {
+                    flagToggle(device, state, PixelBudsSetting.MIC_MUTE_GESTURE, "Mute with a gesture",
+                        "Mutes your mic in calls from the buds (Google's app needs a Pixel phone for it)")
+                    flagToggle(device, state, PixelBudsSetting.PHONE_BOOTH, "Phone booth",
+                        "A call feature Google's app switches on itself; its exact effect isn't known yet")
+                }
+
+                StyledList(title = "Other") {
+                    flagToggle(device, state, PixelBudsSetting.SLEEP_DETECTION, "Sleep detection", "Lets the buds notice when you fall asleep")
+                    flagToggle(device, state, PixelBudsSetting.DIAGNOSTICS, "Diagnostics", "Lets the buds collect usage and diagnostics data")
+                }
 
                 UnnamedSettings(state)
             }
@@ -468,7 +485,7 @@ private fun SoundLevel(device: PixelBudsDevice, state: PixelBudsState) {
 }
 
 @Composable
-private fun HeadGestures(device: PixelBudsDevice) {
+private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
     var on by remember { mutableStateOf(false) }
     var last by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     DisposableEffect(on) {
@@ -476,10 +493,18 @@ private fun HeadGestures(device: PixelBudsDevice) {
         onDispose { if (on) device.stopHeadGestures() }
     }
     StyledList(
-        title = "Head gestures (experimental)",
-        description = "Nod or shake your head. LibrePods logs what the buds report so the gestures can be named."
+        title = "Head gestures",
+        description = "Nod or shake your head to answer, decline and reply. Watching the buds' raw detections is " +
+            "an experiment, logged so the gestures can be named."
     ) {
-        styledToggle(label = "Detect nods and shakes", checked = on, onCheckedChange = { on = it })
+        val enabled = state.headGestures
+        styledToggle(
+            label = "Head gestures",
+            description = if (enabled == null) "Not read yet" else null,
+            checked = enabled == true,
+            onCheckedChange = { device.setHeadGestures(it) },
+        )
+        styledToggle(label = "Watch raw detections (experimental)", checked = on, onCheckedChange = { on = it })
         if (on) {
             styledListItem(
                 contentText = "Last gesture",
@@ -513,8 +538,8 @@ private fun UnnamedSettings(state: PixelBudsState) {
     if (unnamed.isEmpty()) return
     StyledList(
         title = "Unnamed settings (experimental)",
-        description = "Values the buds report that nobody has named yet. Change something in Android's Pixel Buds " +
-            "settings and watch which one moves."
+        description = "Values the buds report that Google's app doesn't name either (it reads none of them by name). " +
+            "LibrePods logs any change to them."
     ) {
         for ((id, field) in unnamed) {
             styledListItem(contentText = "Setting $id", supportingText = Proto.describe(field), enabled = false)

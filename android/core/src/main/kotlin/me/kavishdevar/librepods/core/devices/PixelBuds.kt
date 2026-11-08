@@ -70,14 +70,31 @@ object PixelBudsSetting {
     const val MONO = 19
     const val VOLUME_EXPOSURE_NOTIFICATIONS = 21
     const val CONVERSATION_DETECTION = 22
+    // Named from Google's app (its settings handlers and their logs), 2026-11-08:
+    const val SETUP_FINISHED = 3
+    const val SETUP_MODE = 6
+    const val LAST_SAVED_EQ = 18
+    /** Chimes from the case other than a bud going back in. */
+    const val CASE_SOUNDS = 27
+    /** The chime when a bud goes back in the case. */
+    const val BUD_RETURN_SOUND = 28
+    /** Nod / shake gestures: 1 off, 2 on. */
+    const val HEAD_GESTURES = 29
+    const val PHONE_BOOTH = 34
+    const val SLEEP_DETECTION = 36
+    /** Live Translate's settings (a message; has an auto-ANC flag). */
+    const val LIVE_TRANSLATE = 37
+    /** Muting the call mic with a gesture (Google's app needs a Pixel phone for it). */
+    const val MIC_MUTE_GESTURE = 38
 
     val READ = listOf(NOISE_MODE, CONVERSATION_DETECTION, IN_EAR_DETECTION, MULTIPOINT, EQ, HOLD_ACTIONS,
-        NOISE_LOOP, GESTURES, VOLUME_EQ, BALANCE, MONO, VOLUME_EXPOSURE_NOTIFICATIONS)
+        NOISE_LOOP, GESTURES, VOLUME_EQ, BALANCE, MONO, VOLUME_EXPOSURE_NOTIFICATIONS, CASE_SOUNDS,
+        BUD_RETURN_SOUND, HEAD_GESTURES, PHONE_BOOTH, SLEEP_DETECTION, MIC_MUTE_GESTURE, DIAGNOSTICS)
 
     /** Ids nobody has named yet: read after the rest and logged, so they can be mapped. */
     val EXPLORE = (1..40).filter { it !in READ && it != TEST_MODE }
 
-    val NAMED = READ + listOf(TEST_MODE, DIAGNOSTICS)
+    val NAMED = READ + listOf(TEST_MODE, SETUP_FINISHED, SETUP_MODE, LAST_SAVED_EQ, LIVE_TRANSLATE)
 
     const val EQ_MIN = -6f
     const val EQ_MAX = 6f
@@ -130,6 +147,7 @@ data class PixelBudsState(
     /** -100 (all left) .. 100 (all right). */
     val balance: Int? get() = settings[PixelBudsSetting.BALANCE]?.takeIf { it.wireType == 0 }?.let { PixelBudsSetting.balanceFromRaw(it.varint.toInt()) }
     val bothInCase: Boolean get() = leftInCase == true && rightInCase == true
+    val headGestures: Boolean? get() = settings[PixelBudsSetting.HEAD_GESTURES]?.takeIf { it.wireType == 0 }?.let { it.varint == 2L }
 }
 
 data class PixelBudsSettings(
@@ -427,6 +445,8 @@ class PixelBudsDevice(
         }
     }
 
+    fun setHeadGestures(on: Boolean) = write(PixelBudsSetting.HEAD_GESTURES) { varint(PixelBudsSetting.HEAD_GESTURES, if (on) 2 else 1) }
+
     /** For experiments: writes a plain number to any setting id. */
     fun setRaw(id: Int, value: Int) = write(id) { varint(id, value) }
 
@@ -448,26 +468,28 @@ class PixelBudsDevice(
             delay(800)
             onReady()
             delay(800)
-            val open = AtomicInteger(0)
+            // One count for each open stream, plus one held while starting, so a bud whose stream
+            // ends early can't finish the test before the other bud has started.
+            val open = AtomicInteger(1)
+            // As Google's app: start the test on a bud, then subscribe to its results (subscribing
+            // first fails with status 9, FAILED_PRECONDITION).
             for (bud in BUDS) {
+                val started = maestro.call(bud, "StartTest", service = FIT_TEST) != null
+                Log.i(TAG, "fit test on $bud: ${if (started) "started" else "didn't start"}")
+                if (!started) continue
+                open.incrementAndGet()
                 val subscribed = maestro.subscribe(bud, "SubscribeToResults", FIT_TEST, onEnd = { status ->
                     Log.i(TAG, "fit test on $bud ended, status $status")
                     if (open.decrementAndGet() == 0) onDone()
                 }) { payload ->
                     val m = Proto.parse(payload) ?: return@subscribe
                     val result = PixelBudsFitResult(fit = m.float(1) ?: 0f, noise = m.float(2) ?: 0f)
-                    Log.i(TAG, "fit test on $bud: fit ${result.fit}, noise ${result.noise} -> ${result.grade}")
+                    Log.i(TAG, "fit test on $bud: fit ${result.fit}, noise ${result.noise} -> ${result.grade} (raw ${Proto.describe(m)})")
                     onResult(bud == Peer.LEFT, result)
                 }
-                if (subscribed) open.incrementAndGet()
-                val started = maestro.call(bud, "StartTest", service = FIT_TEST) != null
-                Log.i(TAG, "fit test on $bud: ${if (started) "started" else "didn't start"}")
-                if (!started && subscribed) {
-                    maestro.unsubscribe(bud, "SubscribeToResults", FIT_TEST)
-                    open.decrementAndGet()
-                }
+                if (!subscribed) open.decrementAndGet()
             }
-            if (open.get() == 0) onDone()
+            if (open.decrementAndGet() == 0) onDone()
         }
     }
 
