@@ -49,6 +49,8 @@ import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommand
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommandIdentifier
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.CustomEq
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.MagicKeyType
+import me.kavishdevar.librepods.core.data.apple.MotionSample
+import me.kavishdevar.librepods.core.data.apple.Quaternion
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.MessageOpcode
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.RTBuddyDescriptor
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.SensorDataWxBuddyPayload
@@ -1176,6 +1178,38 @@ class AACPManager(private val device: AppleDevice) {
         return capabilities
     }
 
+    /**
+     * Finds "H2HTransformation" in a motion descriptor (an OSSerializeBinary property list) and reads
+     * the 8-byte data value after it: four int16 LE over 32768, in x, y, z, w order.
+     */
+    private fun parseHeadToHeadphone(descriptor: ByteArray): Quaternion? {
+        val key = "H2HTransformation".toByteArray()
+        var at = -1
+        for (i in 0..descriptor.size - key.size) {
+            if ((key.indices).all { descriptor[i + it] == key[it] }) { at = i; break }
+        }
+        if (at < 0) return null
+        // The value's 4-byte header (kind 0x0A = data, length 8) sits at the next aligned offsets.
+        var pos = at + key.size
+        while (pos + 12 <= descriptor.size && pos < at + key.size + 12) {
+            if (pos % 4 == 0) {
+                val header = (descriptor[pos].toInt() and 0xFF) or
+                    ((descriptor[pos + 1].toInt() and 0xFF) shl 8) or
+                    ((descriptor[pos + 2].toInt() and 0xFF) shl 16) or
+                    ((descriptor[pos + 3].toInt() and 0xFF) shl 24)
+                if ((header ushr 24) and 0x7F == 0x0A && header and 0xFFFFFF == 8) {
+                    fun c(o: Int): Float {
+                        val v = (descriptor[pos + 4 + o].toInt() and 0xFF) or ((descriptor[pos + 5 + o].toInt() and 0xFF) shl 8)
+                        return (if (v and 0x8000 != 0) v - 0x10000 else v) / 32768f
+                    }
+                    return Quaternion(w = c(6), x = c(0), y = c(2), z = c(4))
+                }
+            }
+            pos++
+        }
+        return null
+    }
+
     private fun logSensorProbe(data: SensorDataWX) {
         fun hex(bytes: com.google.protobuf.ByteString): String = bytes.toByteArray().toHexString()
         when {
@@ -1206,6 +1240,12 @@ class AACPManager(private val device: AppleDevice) {
 
     private fun handleSensorData(data: SensorDataWX) {
         logSensorProbe(data)
+        if (data.hasSensorDescriptor() && data.sensorDescriptor.service == SensorServiceType.DEVMOTION6) {
+            parseHeadToHeadphone(data.sensorDescriptor.sensorDescriptor.toByteArray())?.let {
+                Log.i(TAG, "head-to-headphone transform: $it")
+                device.setHeadToHeadphone(it)
+            }
+        }
         if (data.hasCommand()) {
             when (data.command.service) {
                 SensorServiceType.ACTIVITY,
@@ -1235,6 +1275,17 @@ class AACPManager(private val device: AppleDevice) {
                             )
                         }
                     }
+
+                    device.emitMotionSample(
+                        MotionSample(
+                            timestampMicros = (payload[12].toLong() and 0xFF) or
+                                ((payload[13].toLong() and 0xFF) shl 8) or
+                                ((payload[14].toLong() and 0xFF) shl 16) or
+                                ((payload[15].toLong() and 0xFF) shl 24),
+                            orientation = Quaternion.fromXyz(i16(20) / 32768f, i16(22) / 32768f, i16(24) / 32768f),
+                            rotationRate = floatArrayOf(i16(26) / 512f, i16(28) / 512f, i16(30) / 512f),
+                        )
+                    )
 
                     HeadTracking.addAccel(i16(device.settings.value.headGesturesVerticalOffset).toFloat(), i16(device.settings.value.headGesturesHorizontalOffset).toFloat())
                 }

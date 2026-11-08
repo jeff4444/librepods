@@ -49,7 +49,9 @@ enum class StemAction {
     // Broadcasts STEM_PRESS_BROADCAST for automation apps (Tasker, MacroDroid, ...) to act on
     AUTOMATION,
     // Turns the press off: the AirPods forward it and nothing happens
-    NOTHING;
+    NOTHING,
+    // Turns the head mouse on or off
+    HEAD_MOUSE;
     companion object {
         const val STEM_PRESS_BROADCAST = "me.kavishdevar.librepods.STEM_PRESS"
         const val EXTRA_BUD = "bud"

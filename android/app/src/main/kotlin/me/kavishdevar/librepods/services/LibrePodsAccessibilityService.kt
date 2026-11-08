@@ -19,6 +19,8 @@
 package me.kavishdevar.librepods.services
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Path
+import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.util.Log
@@ -57,6 +59,15 @@ class LibrePodsAccessibilityService: AccessibilityService() {
         } catch (e: Exception) {
             Log.e("OptionalAccessibility", "Error handling accessibility event", e)
         }
+    }
+
+    /** Taps the screen at (x, y), for the head mouse. */
+    fun tap(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+            .build()
+        return dispatchGesture(gesture, null, null)
     }
 
     override fun onInterrupt() {}

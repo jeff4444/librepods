@@ -23,6 +23,8 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.Binder
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.provider.Settings
@@ -57,6 +59,7 @@ import me.kavishdevar.librepods.core.bluetooth.MacAddress
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.ControlCommandIdentifier
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.MagicKeyType
 import me.kavishdevar.librepods.core.bluetooth.ble.BLEManager
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.AccessoryState
 import me.kavishdevar.librepods.core.data.heartrate.HeartRateSample
 import me.kavishdevar.librepods.core.data.recording.Recording
@@ -157,6 +160,46 @@ class LibrePodsService: Service() {
     }
 
     private val stemPressHandler by lazy { StemPressHandler(this) }
+
+    private val headMouseController by lazy {
+        HeadMouseController(serviceCoroutineScope) { device -> applyStemPressForwarding(device) }
+    }
+
+    // Starts and stops the head mouse when it is turned on or off (settings toggle, stem action).
+    private fun observeHeadMouse() {
+        HeadMouse.controller = headMouseController
+        serviceCoroutineScope.launch {
+            HeadMouse.requested.collect { on ->
+                if (!on) {
+                    headMouseController.stop()
+                    return@collect
+                }
+                val device = _devices.value.values.filterIsInstance<AppleDevice>()
+                    .firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+                val accessibility = LibrePodsAccessibilityService.instance.value
+                when {
+                    device == null -> {
+                        notifyHeadMouse(R.string.head_mouse_needs_airpods)
+                        HeadMouse.requested.value = false
+                    }
+                    accessibility == null -> {
+                        notifyHeadMouse(R.string.head_mouse_needs_accessibility)
+                        startActivity(
+                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                        HeadMouse.requested.value = false
+                    }
+                    else -> headMouseController.start(device, accessibility)
+                }
+            }
+        }
+    }
+
+    private fun notifyHeadMouse(message: Int) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(this, getString(message), Toast.LENGTH_LONG).show()
+        }
+    }
 
     // Debug builds only: show the island or the case card on demand, through the same code a real
     // connection or lid opening uses, for the first known AirPods.
@@ -397,7 +440,10 @@ class LibrePodsService: Service() {
 
     private fun applyStemPressForwarding(device: AppleDevice) {
         if (device.connectionState.value != ConnectionState.CONNECTED) return
-        val sent = device.applyStemPressForwarding(onCall = isOnCall)
+        // While the head mouse runs, single, double and long presses are its tap, recentre and stop.
+        val headMouse = HeadMouse.running.value && headMouseController.currentDevice == device
+        val extra = if (headMouse) setOf(StemPressType.SINGLE_PRESS, StemPressType.DOUBLE_PRESS, StemPressType.LONG_PRESS) else emptySet()
+        val sent = device.applyStemPressForwarding(onCall = isOnCall, extra = extra)
         Log.i(
             TAG,
             "stem press forwarding for ${device.macAddress.toRedactedString()}: " +
@@ -518,6 +564,7 @@ class LibrePodsService: Service() {
         loadDevices()
 
         bleManager.start()
+        observeHeadMouse()
         registerReceiver(screenStateReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -867,7 +914,10 @@ class LibrePodsService: Service() {
                         }
                     }
                 }
-                if (state != ConnectionState.CONNECTED) lastEarState.remove(device.macAddress)
+                if (state != ConnectionState.CONNECTED) {
+                    lastEarState.remove(device.macAddress)
+                    if (headMouseController.currentDevice == device) HeadMouse.requested.value = false
+                }
 
                 if (previousConnectionState == ConnectionState.DISCONNECTED && state == ConnectionState.AVAILABLE) {
                     when (device) {

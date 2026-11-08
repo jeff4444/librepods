@@ -28,6 +28,8 @@ import me.kavishdevar.librepods.core.data.StemAction
 import me.kavishdevar.librepods.core.data.StemPressBud
 import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.BuddyState
+import me.kavishdevar.librepods.core.data.apple.MotionSample
+import me.kavishdevar.librepods.core.data.apple.Quaternion
 import me.kavishdevar.librepods.core.data.audio.MicrophoneFrame
 import me.kavishdevar.librepods.core.data.audio.MicrophoneState
 import me.kavishdevar.librepods.core.data.recording.Recording
@@ -67,6 +69,23 @@ class AppleDevice(
         extraBufferCapacity = 64
     )
     val microphoneFrames = _microphoneFrames.asSharedFlow()
+
+    // Head motion decoded from the DEVMOTION6 stream, for features such as the head mouse.
+    private val _motionSamples = MutableSharedFlow<MotionSample>(extraBufferCapacity = 64)
+    val motionSamples = _motionSamples.asSharedFlow()
+
+    internal fun emitMotionSample(sample: MotionSample) {
+        _motionSamples.tryEmit(sample)
+    }
+
+    // Rotation from the bud's motion frame to the head frame (yaw about Z, pitch about X), sent in
+    // the motion stream's descriptor on every connection as "H2HTransformation".
+    private val _headToHeadphone = MutableStateFlow<Quaternion?>(null)
+    val headToHeadphone: StateFlow<Quaternion?> = _headToHeadphone.asStateFlow()
+
+    internal fun setHeadToHeadphone(q: Quaternion) {
+        _headToHeadphone.value = q
+    }
 
     private val _connectionNumber = MutableStateFlow(0)
     override val connectionNumber = _connectionNumber.asStateFlow()
@@ -278,8 +297,8 @@ class AppleDevice(
      * handled by the AirPods, so the app must act on every one of them. With [onCall] nothing is
      * forwarded, so answering and hanging up work as usual.
      */
-    fun applyStemPressForwarding(onCall: Boolean = false): Boolean {
-        val forwarded = if (onCall) emptySet() else settings.value.forwardedPressTypes()
+    fun applyStemPressForwarding(onCall: Boolean = false, extra: Set<StemPressType> = emptySet()): Boolean {
+        val forwarded = if (onCall) emptySet() else settings.value.forwardedPressTypes() + extra
         return aacp.sendRawGesturesConfig(
             singlePressCustomized = StemPressType.SINGLE_PRESS in forwarded,
             doublePressCustomized = StemPressType.DOUBLE_PRESS in forwarded,
@@ -320,6 +339,19 @@ class AppleDevice(
                 headTrackingState = BuddyState.WAITING
             )
         }
+    }
+
+    /**
+     * Starts (or with a zero [interval] stops) the head-motion stream decoded into [motionSamples],
+     * using the service this model and firmware stream motion on.
+     */
+    fun setMotionStream(interval: Duration): Boolean {
+        val sensorServiceType = when (metadata.value.model) {
+            AirPodsModel.AIRPODS_5,
+            AirPodsModel.AIRPODS_5_WCC -> if (interval == Duration.ZERO) SensorServiceType.DEVMOTION6 else SensorServiceType.CMA_COMMAND
+            else -> if (metadata.value.version3.ifBlank { "8" }.first().digitToInt() >= 8) SensorServiceType.DEVMOTION6 else SensorServiceType.ACTIVITY
+        }
+        return aacp.setSensorServiceReportInterval(sensorServiceType = sensorServiceType, interval = interval)
     }
 
     fun stopHeadTracking() {

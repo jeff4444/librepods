@@ -38,6 +38,7 @@ val stemActionChoices = listOf(
     StemAction.CYCLE_listening_mode_MODES,
     StemAction.DIGITAL_ASSISTANT,
     StemAction.AUTOMATION,
+    StemAction.HEAD_MOUSE,
     StemAction.NOTHING,
 )
 
@@ -52,6 +53,7 @@ fun stemActionLabel(action: StemAction): String = when (action) {
     StemAction.DIGITAL_ASSISTANT -> stringResource(R.string.digital_assistant)
     StemAction.AUTOMATION -> stringResource(R.string.stem_action_automation)
     StemAction.NOTHING -> stringResource(R.string.stem_action_nothing)
+    StemAction.HEAD_MOUSE -> stringResource(R.string.stem_action_head_mouse)
 }
 
 @Composable

@@ -54,6 +54,9 @@ data class AppleSettings(
 
     val hrmAlertEnabled: Boolean = false,
     @IntRange(from = 120, to = 200) val hrmAlertThreshold: Int = 150,
+
+    // Head mouse cursor speed, 1 = default.
+    val headMouseSpeed: Float = 1f,
 ): DeviceSettings {
     fun stemAction(bud: StemPressBud, type: StemPressType): StemAction {
         val left = bud == StemPressBud.LEFT

@@ -83,6 +83,9 @@ import me.kavishdevar.librepods.presentation.components.primitives.StyledListIte
 import me.kavishdevar.librepods.presentation.components.primitives.StyledListItemOrientation
 import me.kavishdevar.librepods.presentation.components.primitives.StyledScaffold
 import me.kavishdevar.librepods.presentation.components.primitives.StyledSlider
+import me.kavishdevar.librepods.presentation.components.primitives.StyledList
+import me.kavishdevar.librepods.presentation.components.primitives.styledToggle
+import me.kavishdevar.librepods.services.HeadMouse
 import me.kavishdevar.librepods.presentation.components.primitives.StyledToggle
 import me.kavishdevar.librepods.presentation.design.LibrePodsTheme
 import me.kavishdevar.librepods.presentation.design.LocalDesign
@@ -408,6 +411,34 @@ fun AppleSettingsScreen(
                         rightAction = settings.rightLongPressAction,
                         navigateToLeftLongPress = navigateToLeftLongPress,
                         navigateToRightLongPress = navigateToRightLongPress
+                    )
+                }
+            }
+
+            if (baseCapabilities.contains(BaseCapability.HEAD_GESTURES)) {
+                item(key = "spacer_head_mouse") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                item(key = "head_mouse") {
+                    val headMouseOn by HeadMouse.requested.collectAsState()
+                    StyledList(
+                        title = stringResource(R.string.head_mouse_title),
+                        description = stringResource(R.string.head_mouse_description)
+                    ) {
+                        styledToggle(
+                            label = stringResource(R.string.head_mouse_toggle),
+                            checked = headMouseOn,
+                            onCheckedChange = { HeadMouse.requested.value = it }
+                        )
+                    }
+                }
+                item(key = "head_mouse_speed") {
+                    StyledSlider(
+                        label = stringResource(R.string.head_mouse_speed),
+                        value = settings.headMouseSpeed,
+                        onValueChange = { speed -> updateSettings { it.copy(headMouseSpeed = speed) } },
+                        valueRange = 0.4f..2.5f,
+                        independent = true
                     )
                 }
             }
