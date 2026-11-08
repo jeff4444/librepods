@@ -74,6 +74,7 @@ import me.kavishdevar.librepods.core.bluetooth.maestro.Proto
 import me.kavishdevar.librepods.core.devices.ConnectionState
 import me.kavishdevar.librepods.core.devices.PixelBudsDevice
 import me.kavishdevar.librepods.core.devices.PixelBudsFitResult
+import me.kavishdevar.librepods.core.devices.PixelBudsHeadGesture
 import me.kavishdevar.librepods.core.devices.PixelBudsHoldAction
 import me.kavishdevar.librepods.core.devices.PixelBudsNoiseMode
 import me.kavishdevar.librepods.core.devices.PixelBudsSetting
@@ -510,15 +511,20 @@ private fun SoundLevel(device: PixelBudsDevice, state: PixelBudsState) {
 @Composable
 private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
     var on by remember { mutableStateOf(false) }
-    var last by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    var last by remember { mutableStateOf<Pair<Int, Long>?>(null) }  // the last recognised gesture
+    var moving by remember { mutableStateOf<PixelBudsHeadGesture?>(null) }
     DisposableEffect(on) {
-        if (on) device.startHeadGestures { value -> last = value to System.currentTimeMillis() }
+        if (on) device.startHeadGestures { g ->
+            moving = g
+            g.gesture?.let { last = it to System.currentTimeMillis() }
+        }
         onDispose { if (on) device.stopHeadGestures() }
     }
     val watching = on
     val lastSeen = last
+    val movingNow = moving
     StyledList(
-        key = watching to lastSeen,
+        key = Triple(watching, lastSeen, movingNow),
         title = "Head gestures",
         description = "Nod or shake your head to answer, decline and reply. Watching the buds' raw detections is " +
             "an experiment, logged so the gestures can be named."
@@ -534,7 +540,12 @@ private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
         if (watching) {
             styledListItem(
                 contentText = "Last gesture",
-                supportingText = lastSeen?.let { (value, at) -> "Raw value $value, ${(System.currentTimeMillis() - at) / 1000}s ago" } ?: "Nothing yet",
+                supportingText = lastSeen?.let { (value, at) -> "${gestureName(value)}, ${(System.currentTimeMillis() - at) / 1000} s ago" } ?: "Nothing yet",
+                enabled = false,
+            )
+            styledListItem(
+                contentText = "Moving",
+                supportingText = movingNow?.takeIf { it.axis != null }?.let { "${gestureName(it.axis!!)} swings: ${it.swings ?: 0} of 4" } ?: "Still",
                 enabled = false,
             )
         }
@@ -546,6 +557,12 @@ private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
             LottieLoop(if (nod) R.raw.pixel_buds_head_nod else R.raw.pixel_buds_head_shake, Modifier.weight(1f).clip(RoundedCornerShape(24.dp)))
         }
     }
+}
+
+private fun gestureName(value: Int) = when (value) {
+    PixelBudsHeadGesture.NOD -> "Nod"
+    PixelBudsHeadGesture.SHAKE -> "Shake"
+    else -> "Gesture $value"
 }
 
 @Composable

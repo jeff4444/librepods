@@ -116,6 +116,18 @@ object PixelBudsSetting {
     fun balanceToRaw(value: Int): Int = value.coerceIn(-100, 100).let { if (it > 0) ((it - 1) shl 1) or 1 else (-it) shl 1 }
 }
 
+/**
+ * A head gesture report: [gesture] once one is recognised (1 nod, 2 shake, as Google's own
+ * tutorial reads them), and while moving, the [axis] being swung (1 nod, 2 shake) and how many
+ * swings so far. A gesture completes at 4 swings. Only the right bud detects.
+ */
+data class PixelBudsHeadGesture(val gesture: Int?, val axis: Int?, val swings: Int?) {
+    companion object {
+        const val NOD = 1
+        const val SHAKE = 2
+    }
+}
+
 /** One bud's ear tip fit result: lower [fit] is a better seal (tentative), [noise] the room's noise. */
 data class PixelBudsFitResult(val fit: Float, val noise: Float) {
     enum class Grade { GOOD, ADJUST, CHANGE_TIPS, NOISY, FAILED }
@@ -555,8 +567,8 @@ class PixelBudsDevice(
 
     // ---- Head gestures (experimental) ----------------------------------------------------------
 
-    /** Starts nod/shake detection; [onGesture] gets the buds' raw result numbers. */
-    fun startHeadGestures(onGesture: (Int) -> Unit) {
+    /** Starts nod/shake detection; [onGesture] gets each report. */
+    fun startHeadGestures(onGesture: (PixelBudsHeadGesture) -> Unit) {
         scope.launch {
             for (bud in BUDS) {
                 val started = maestro.call(bud, "StartDetection", service = HEAD_GESTURE) != null
@@ -565,7 +577,8 @@ class PixelBudsDevice(
                 maestro.subscribe(bud, "SubscribeToResults", HEAD_GESTURE, onEnd = { Log.i(TAG, "head gestures on $bud ended: $it") }) { payload ->
                     val m = Proto.parse(payload)
                     Log.i(TAG, "head gesture from $bud: ${m?.let(Proto::describe)}")
-                    onGesture(m?.int(1) ?: 0)
+                    val progress = m?.message(2)
+                    onGesture(PixelBudsHeadGesture(gesture = m?.int(1), axis = progress?.int(1), swings = progress?.int(2)))
                 }
             }
         }

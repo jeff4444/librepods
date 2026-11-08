@@ -131,6 +131,9 @@ private const val DEBUG_MAESTRO = "me.kavishdevar.librepods.DEBUG_MAESTRO"
 // Pixel Buds read-only sources: Android's battery level and the buds' Fast Pair broadcasts:
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_PIXELBUDS --ei seconds 90 -p me.kavishdevar.librepods.dev2
 private const val DEBUG_PIXELBUDS = "me.kavishdevar.librepods.DEBUG_PIXELBUDS"
+// Pixel Buds: write one setting as a plain number (for trying the unnamed ones, or setup mode 6):
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_PIXELBUDS_SET --ei id 6 --ei value 1 -p me.kavishdevar.librepods.dev2
+private const val DEBUG_PIXELBUDS_SET = "me.kavishdevar.librepods.DEBUG_PIXELBUDS_SET"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -572,6 +575,18 @@ class LibrePodsService: Service() {
                 debugHeadTracker(intent.getIntExtra("seconds", 20))
                 return
             }
+            if (intent.action == DEBUG_PIXELBUDS_SET) {
+                val id = intent.getIntExtra("id", -1)
+                val value = intent.getIntExtra("value", -1)
+                val buds = devices.value.values.filterIsInstance<PixelBudsDevice>().firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+                if (id < 1 || value < 0 || buds == null) {
+                    Log.w(TAG, "DEBUG_PIXELBUDS_SET: needs --ei id and --ei value, and connected Pixel Buds")
+                } else {
+                    Log.i(TAG, "DEBUG_PIXELBUDS_SET: setting $id = $value")
+                    buds.setRaw(id, value)
+                }
+                return
+            }
             if (intent.action == DEBUG_PIXELBUDS) {
                 PixelBudsProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 90),
                     unfiltered = intent.getBooleanExtra("all", false))
@@ -866,6 +881,7 @@ class LibrePodsService: Service() {
                 addAction(DEBUG_HEAD_TRACKER)
                 addAction(DEBUG_MAESTRO)
                 addAction(DEBUG_PIXELBUDS)
+                addAction(DEBUG_PIXELBUDS_SET)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)

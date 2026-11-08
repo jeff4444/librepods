@@ -243,7 +243,19 @@ noisy; the decompiled grading is garbled, so which way "fit" goes is still to co
 returned `{1: 36493, 2: {1: day, 6: float}...}`; the day numbers (18240...) and floats are not
 decoded yet.
 
-**Other streams:** `SubscribeToOobeActions` reports on/off-head events (10 left on, 11 left off,
-12 right on, 13 right off) outside setup too; taps were not seen yet. `Multipoint.SubscribeToQuietModeStatus`
+**Head gestures** (`maestro_pw.HeadGesture`, tested 2026-11-08): `StartDetection` then
+`SubscribeToResults` (empty messages); only the right bud starts (the left answers with an error).
+Each report is `{1: gesture, 2: {1: axis, 2: swings}}`: field 2 streams while you move (axis 1 nod,
+2 shake; swings counts each swing), and field 1 appears when a gesture completes at 4 swings:
+1 nod, 2 shake (Google's tutorial screen listens for 1 on its nod page and 2 on its shake page).
+Shakes were recognised reliably; nods needed to be firm.
+
+**Taps don't reach apps:** in normal use a tap, double tap, swipe or hold goes to Android as an
+AVRCP media key (play, next, pause) or volume, and nothing arrives on Maestro. Setup mode
+(setting 6 = 1) doesn't change that: the buds turned it back off themselves at the first tap,
+which then played music as usual. `SubscribeToOobeActions` only reported on/off-head events
+(10 left on, 11 left off, 12 right on, 13 right off).
+
+**Other streams:** `Multipoint.SubscribeToQuietModeStatus`
 sent `{1: 0}`. `HeadGesture.StartDetection` + `SubscribeToResults` (empty messages) should stream
 `{1: gesture}`; not tried with nods yet.
