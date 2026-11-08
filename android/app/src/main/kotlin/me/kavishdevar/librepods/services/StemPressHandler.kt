@@ -46,12 +46,8 @@ class StemPressHandler(private val context: Context) {
     fun onStemPress(device: AppleDevice, bud: StemPressBud, type: StemPressType, onCall: Boolean) {
         // While the head mouse runs it borrows these presses (they are forwarded for it).
         if (!onCall && HeadMouse.running.value) {
-            when (type) {
-                StemPressType.SINGLE_PRESS -> { HeadMouse.tap(); return }
-                StemPressType.DOUBLE_PRESS -> { HeadMouse.recenter(); return }
-                StemPressType.LONG_PRESS -> { HeadMouse.requested.value = false; return }
-                else -> {}
-            }
+            HeadMouse.onStemPress(bud, type)
+            return
         }
         val settings = device.settings.value
         if (onCall || type !in settings.forwardedPressTypes()) {

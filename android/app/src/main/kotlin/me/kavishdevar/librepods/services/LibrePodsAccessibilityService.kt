@@ -70,6 +70,23 @@ class LibrePodsAccessibilityService: AccessibilityService() {
         return dispatchGesture(gesture, null, null)
     }
 
+    /** Two quick taps at (x, y), for the head mouse's double-click. */
+    fun doubleTap(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 40))
+            .addStroke(GestureDescription.StrokeDescription(path, 140, 40))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    /** Dispatches a gesture and reports whether it completed (false: cancelled or refused). */
+    fun dispatch(gesture: GestureDescription, onDone: (Boolean) -> Unit): Boolean =
+        dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) = onDone(true)
+            override fun onCancelled(gestureDescription: GestureDescription?) = onDone(false)
+        }, null)
+
     override fun onInterrupt() {}
 
     override fun onUnbind(intent: Intent?): Boolean {

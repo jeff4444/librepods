@@ -388,6 +388,8 @@ class AACPManager(private val device: AppleDevice) {
             }
 
             MessageOpcode.STEM_PRESS -> {
+                // Raw first: press types the parser doesn't know would otherwise be lost.
+                Log.i("SensorProbe", "stem raw=${packet.toHexString()}")
                 val packet = StemPressPacket.parse(packet)
 
                 CoroutineScope(Dispatchers.IO).launch {

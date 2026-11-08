@@ -37,7 +37,7 @@
     <string name="stem_action_head_mouse">Head mouse on/off</string>
     <string name="head_mouse_title">Head Mouse</string>
     <string name="head_mouse_toggle">Head mouse</string>
-    <string name="head_mouse_description">Move a cursor by turning your head. A single press taps where it points, a double press brings it back to the middle, and press and hold turns it off. Needs LibrePods turned on in Accessibility settings.</string>
+    <string name="head_mouse_description">Move a cursor by turning your head. Left stem: press to click, twice to double-click, three times for scroll mode (tilt your head to scroll), press and hold to grab and drag (press again to drop). Right stem: press for Back, twice to recentre, three times for Home, press and hold to turn the head mouse off. Needs LibrePods turned on in Accessibility settings.</string>
     <string name="head_mouse_speed">Cursor speed</string>
     <string name="head_mouse_needs_accessibility">Turn on LibrePods in Accessibility settings to use the head mouse</string>
     <string name="head_mouse_needs_airpods">Connect your AirPods to use the head mouse</string>

@@ -310,6 +310,27 @@ class LibrePodsService: Service() {
                 aacp.sensorProbeLogging = true
                 Log.i("SensorProbe", "raw service=$service setting=$setting config=${config.toHexString()}, sent: ${aacp.sendRawSensorSetting(service, setting, config)}")
             }
+            "gestures" -> {
+                // Sets which stem gestures the AirPods forward (RAW_GESTURES_CONFIG) to any value,
+                // and logs volume changes for two minutes: swipes on the stem change the volume.
+                val bits = intent.getIntExtra("bits", 0)
+                Log.i("SensorProbe", "gesture bits 0x${bits.toString(16)}, sent: ${device.setControlCommand(ControlCommandIdentifier.RAW_GESTURES_CONFIG, bits)}")
+                val volumeLogger = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        Log.i(
+                            "SensorProbe",
+                            "volume stream=${intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)} " +
+                                "${intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)} -> " +
+                                "${intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)}"
+                        )
+                    }
+                }
+                registerReceiver(volumeLogger, IntentFilter("android.media.VOLUME_CHANGED_ACTION"), RECEIVER_EXPORTED)
+                serviceCoroutineScope.launch {
+                    delay(120.seconds)
+                    runCatching { unregisterReceiver(volumeLogger) }
+                }
+            }
             "log" -> {
                 aacp.sensorProbeLogging = intent.getBooleanExtra("on", true)
                 Log.i("SensorProbe", "sample logging ${aacp.sensorProbeLogging}")
@@ -440,9 +461,9 @@ class LibrePodsService: Service() {
 
     private fun applyStemPressForwarding(device: AppleDevice) {
         if (device.connectionState.value != ConnectionState.CONNECTED) return
-        // While the head mouse runs, single, double and long presses are its tap, recentre and stop.
+        // While the head mouse runs, every press on either stem is one of its controls.
         val headMouse = HeadMouse.running.value && headMouseController.currentDevice == device
-        val extra = if (headMouse) setOf(StemPressType.SINGLE_PRESS, StemPressType.DOUBLE_PRESS, StemPressType.LONG_PRESS) else emptySet()
+        val extra = if (headMouse) StemPressType.entries.toSet() else emptySet()
         val sent = device.applyStemPressForwarding(onCall = isOnCall, extra = extra)
         Log.i(
             TAG,

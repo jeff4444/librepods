@@ -18,10 +18,13 @@
 
 package me.kavishdevar.librepods.services
 
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -35,6 +38,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import me.kavishdevar.librepods.core.data.StemPressBud
+import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.MotionSample
 import me.kavishdevar.librepods.core.data.apple.Quaternion
 import me.kavishdevar.librepods.core.devices.AppleDevice
@@ -46,8 +51,11 @@ import kotlin.time.Duration.Companion.milliseconds
 private const val TAG = "HeadMouse"
 
 /**
- * Head mouse (roadmap #11): a cursor that follows head rotation, with stem presses to tap
- * (single), recentre (double) and turn it off (press and hold).
+ * Head mouse (roadmap #11): a cursor that follows head rotation, driven by stem presses.
+ *
+ * Left stem: single = click, double = double-click, triple = scroll mode (tilt to scroll),
+ * hold = grab (drag with your head; single press drops). Right stem: single = Back,
+ * double = recentre, triple = Home, hold = head mouse off.
  */
 object HeadMouse {
     /** Whether the head mouse should be on: the settings toggle and the stem action set this. */
@@ -62,9 +70,7 @@ object HeadMouse {
         requested.value = !requested.value
     }
 
-    fun tap() = controller?.tap()
-
-    fun recenter() = controller?.recenter()
+    fun onStemPress(bud: StemPressBud, type: StemPressType) = controller?.onStemPress(bud, type)
 }
 
 /**
@@ -85,12 +91,21 @@ class HeadMouseController(
     private var cursor: CursorView? = null
     private var jobs = emptyList<Job>()
 
+    // Cursor position, screen pixels. Written on the main thread.
     private var x = 0f
     private var y = 0f
     private var width = 1
     private var height = 1
     private var lastTimestamp: Long? = null
     @Volatile private var lastSampleAt = 0L
+
+    private enum class Mode { POINT, GRAB, SCROLL }
+    @Volatile private var mode = Mode.POINT
+
+    // Scroll mode: head pitch since entering it, radians (positive = looking up).
+    private var scrollPitch = 0f
+
+    private val finger = Finger()
 
     val currentDevice: AppleDevice?
         get() = device
@@ -108,6 +123,7 @@ class HeadMouseController(
             height = bounds.height()
             x = width / 2f
             y = height / 2f
+            mode = Mode.POINT
 
             val view = CursorView(accessibility).also { it.moveTo(x, y) }
             try {
@@ -140,6 +156,7 @@ class HeadMouseController(
                     }
                 },
             )
+            main.post(finger.pump)
             HeadMouse.running.value = true
             Log.i(TAG, "started, screen ${width}x$height, transform ${device.headToHeadphone.value}")
             onRunningChanged(device)
@@ -149,6 +166,8 @@ class HeadMouseController(
     fun stop() {
         main.post {
             val device = device ?: return@post
+            finger.cancel()
+            main.removeCallbacks(finger.pump)
             jobs.forEach { it.cancel() }
             jobs = emptyList()
             device.setMotionStream(Duration.ZERO)
@@ -156,28 +175,68 @@ class HeadMouseController(
             cursor = null
             this.device = null
             accessibility = null
+            mode = Mode.POINT
             HeadMouse.running.value = false
             Log.i(TAG, "stopped")
             onRunningChanged(device)
         }
     }
 
-    fun tap() {
+    fun onStemPress(bud: StemPressBud, type: StemPressType) {
         main.post {
             val service = accessibility ?: return@post
-            val tapped = service.tap(x, y)
-            Log.d(TAG, "tap at ${x.toInt()},${y.toInt()}: $tapped")
-            cursor?.pulse()
+            Log.d(TAG, "$bud $type in $mode")
+            when (bud) {
+                StemPressBud.LEFT -> when (type) {
+                    StemPressType.SINGLE_PRESS -> when (mode) {
+                        Mode.GRAB -> drop()
+                        Mode.SCROLL -> setMode(Mode.POINT)
+                        Mode.POINT -> {
+                            service.tap(x, y)
+                            cursor?.pulse()
+                        }
+                    }
+                    StemPressType.DOUBLE_PRESS -> {
+                        if (mode != Mode.POINT) setMode(Mode.POINT)
+                        service.doubleTap(x, y)
+                        cursor?.pulse()
+                    }
+                    StemPressType.TRIPLE_PRESS -> setMode(if (mode == Mode.SCROLL) Mode.POINT else Mode.SCROLL)
+                    StemPressType.LONG_PRESS -> if (mode == Mode.GRAB) drop() else setMode(Mode.GRAB)
+                }
+                StemPressBud.RIGHT -> when (type) {
+                    StemPressType.SINGLE_PRESS -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    StemPressType.DOUBLE_PRESS -> {
+                        setMode(Mode.POINT)
+                        x = width / 2f
+                        y = height / 2f
+                        cursor?.moveTo(x, y)
+                    }
+                    StemPressType.TRIPLE_PRESS -> {
+                        setMode(Mode.POINT)
+                        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                    }
+                    StemPressType.LONG_PRESS -> HeadMouse.requested.value = false
+                }
+            }
         }
     }
 
-    fun recenter() {
-        main.post {
-            x = width / 2f
-            y = height / 2f
-            cursor?.moveTo(x, y)
+    private fun setMode(new: Mode) {
+        if (new == mode) return
+        // Leaving grab or scroll lifts the finger without a fling.
+        if (mode != Mode.POINT) finger.up()
+        mode = new
+        when (new) {
+            Mode.GRAB -> finger.down(x, y)
+            Mode.SCROLL -> scrollPitch = 0f
+            Mode.POINT -> {}
         }
+        cursor?.setMode(new.ordinal)
+        Log.i(TAG, "mode $new")
     }
+
+    private fun drop() = setMode(Mode.POINT)
 
     private fun onSample(sample: MotionSample) {
         lastSampleAt = SystemClock.elapsedRealtime()
@@ -192,6 +251,13 @@ class HeadMouseController(
 
         val rate = (device.headToHeadphone.value ?: DEFAULT_HEAD_TO_HEADPHONE).rotate(sample.rotationRate)
         val speed = device.settings.value.headMouseSpeed
+
+        main.post {
+            if (mode == Mode.SCROLL) scroll(rate[0], dt, speed) else point(rate, dt, speed)
+        }
+    }
+
+    private fun point(rate: FloatArray, dt: Float, speed: Float) {
         // Pixels per radian of head turn: about 40 degrees sweeps the screen's width at speed 1.
         val base = width / 0.7f * speed
 
@@ -202,12 +268,128 @@ class HeadMouseController(
             return sign(radiansPerSecond) * (magnitude - DEAD_ZONE) * base * (1f + ACCELERATION * magnitude) * dt
         }
 
-        val newX = (x + move(rate[2])).coerceIn(0f, width - 1f)
-        val newY = (y - move(rate[0])).coerceIn(0f, height - 1f)
-        main.post {
-            x = newX
-            y = newY
-            cursor?.moveTo(x, y)
+        x = (x + move(rate[2])).coerceIn(0f, width - 1f)
+        y = (y - move(rate[0])).coerceIn(0f, height - 1f)
+        cursor?.moveTo(x, y)
+        if (mode == Mode.GRAB) finger.moveTo(x, y)
+    }
+
+    /**
+     * Tilting the head down from where scroll mode started scrolls down, up scrolls up, faster
+     * the further the tilt. A virtual finger drags the page; it lifts when the head is level (so
+     * it never long-presses) and starts again from the cursor before it reaches the screen edge.
+     */
+    private fun scroll(pitchRate: Float, dt: Float, speed: Float) {
+        scrollPitch += pitchRate * dt
+        val tilt = abs(scrollPitch) - SCROLL_DEAD_ZONE
+        if (tilt <= 0f) {
+            if (finger.isDown) finger.up()
+            return
+        }
+        // Looking down (pitch < 0) scrolls down: the finger moves up.
+        val fingerSpeed = tilt * SCROLL_GAIN * height * speed
+        val step = (if (scrollPitch < 0) -1f else 1f) * fingerSpeed * dt
+        if (!finger.isDown) finger.down(x, y)
+        val target = finger.targetY + step
+        if (target < EDGE_MARGIN || target > height - EDGE_MARGIN) {
+            // Out of room: lift and put the finger back down at the cursor.
+            finger.up()
+            finger.down(x, y)
+        } else {
+            finger.moveTo(finger.targetX, target)
+        }
+    }
+
+    /**
+     * A finger held on the screen through the accessibility service, sent as a continued gesture
+     * in short segments so it can stay down as long as needed while following a target point.
+     */
+    private inner class Finger {
+        private var stroke: GestureDescription.StrokeDescription? = null
+        private var fx = 0f
+        private var fy = 0f
+        var targetX = 0f
+            private set
+        var targetY = 0f
+            private set
+        private var inFlight = false
+        private var lifting = false
+
+        val isDown: Boolean
+            get() = stroke != null && !lifting
+
+        val pump: Runnable = object : Runnable {
+            override fun run() {
+                send()
+                main.postDelayed(this, 16)
+            }
+        }
+
+        fun down(x: Float, y: Float) {
+            if (stroke != null) return
+            fx = x; fy = y; targetX = x; targetY = y
+            lifting = false
+            val path = Path().apply { moveTo(x, y) }
+            val first = GestureDescription.StrokeDescription(path, 0, SEGMENT_MS, true)
+            stroke = first
+            dispatch(first)
+        }
+
+        fun moveTo(x: Float, y: Float) {
+            targetX = x.coerceIn(0f, width - 1f)
+            targetY = y.coerceIn(0f, height - 1f)
+        }
+
+        fun up() {
+            if (stroke != null) lifting = true
+        }
+
+        fun cancel() {
+            stroke = null
+            lifting = false
+            inFlight = false
+        }
+
+        private fun send() {
+            val current = stroke ?: return
+            if (inFlight) return
+            val path = Path().apply {
+                moveTo(fx, fy)
+                // Lift in place, so letting go doesn't fling the page.
+                if (!lifting && (targetX != fx || targetY != fy)) lineTo(targetX, targetY)
+            }
+            val next = current.continueStroke(path, 0, SEGMENT_MS, !lifting)
+            if (!lifting) {
+                fx = targetX
+                fy = targetY
+            }
+            if (lifting) {
+                stroke = null
+                lifting = false
+            } else {
+                stroke = next
+            }
+            dispatch(next)
+        }
+
+        private fun dispatch(s: GestureDescription.StrokeDescription) {
+            val service = accessibility ?: return
+            inFlight = true
+            val sent = service.dispatch(GestureDescription.Builder().addStroke(s).build()) { completed ->
+                main.post {
+                    inFlight = false
+                    if (!completed) {
+                        // Something else touched the screen; the gesture is over.
+                        Log.d(TAG, "finger gesture cancelled")
+                        stroke = null
+                        lifting = false
+                    }
+                }
+            }
+            if (!sent) {
+                inFlight = false
+                stroke = null
+            }
         }
     }
 
@@ -233,14 +415,21 @@ class HeadMouseController(
         private var cx = 0f
         private var cy = 0f
         private var pulseUntil = 0L
+        private var mode = 0
 
-        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99FFFFFF.toInt(); style = Paint.Style.FILL }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val dark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE6000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density }
         private val light = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE6FFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density }
 
         fun moveTo(x: Float, y: Float) {
             cx = x
             cy = y
+            invalidate()
+        }
+
+        /** 0 pointing (white), 1 grabbing (orange), 2 scrolling (blue). */
+        fun setMode(mode: Int) {
+            this.mode = mode
             invalidate()
         }
 
@@ -253,6 +442,11 @@ class HeadMouseController(
         override fun onDraw(canvas: Canvas) {
             val pressed = SystemClock.uptimeMillis() < pulseUntil
             val r = (if (pressed) 8f else 11f) * density
+            fill.color = when (mode) {
+                1 -> 0xCCFF9500.toInt()
+                2 -> 0xCC0A84FF.toInt()
+                else -> 0x99FFFFFF.toInt()
+            }
             canvas.drawCircle(cx, cy, r, fill)
             canvas.drawCircle(cx, cy, r, dark)
             // A light outer ring keeps the cursor visible on dark and light screens.
@@ -262,10 +456,17 @@ class HeadMouseController(
 
     private companion object {
         val STREAM_INTERVAL = 20.milliseconds
+        const val SEGMENT_MS = 40L
 
         // Below this rotation rate (rad/s, about 1.4 deg/s) the head counts as still.
         const val DEAD_ZONE = 0.025f
         const val ACCELERATION = 1.5f
+
+        // Scroll mode: tilt beyond about 4 degrees scrolls; at 0.3 rad past that the finger moves
+        // the screen's height in about 1.5 s at speed 1.
+        const val SCROLL_DEAD_ZONE = 0.07f
+        const val SCROLL_GAIN = 2.2f
+        const val EDGE_MARGIN = 150f
 
         // The left bud of one pair of AirPods Pro 3 (the right bud's is mirrored: y and z negated),
         // used only for the moment before the AirPods answer the descriptor request.
