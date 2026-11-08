@@ -186,6 +186,12 @@ class PixelBudsDevice(
     }.getOrDefault(false)
 
     private suspend fun readAll() {
+        // Battery and placement first: they decide between the case card and the island, and the
+        // buds are often out of the case a second after the lid opens. Ask both buds, since either
+        // may be asleep; they report the same thing.
+        for (bud in listOf(MaestroClient.Peer.RIGHT, MaestroClient.Peer.LEFT)) {
+            maestro.subscribe(bud, "SubscribeRuntimeInfo") { payload -> Proto.parse(payload)?.let(::onRuntimeInfo) }
+        }
         // Either bud can answer; use the first that does (one may be in the case or asleep).
         val software = maestro.call(MaestroClient.Peer.RIGHT, "GetSoftwareInfo")?.also { peer = MaestroClient.Peer.RIGHT }
             ?: maestro.call(MaestroClient.Peer.LEFT, "GetSoftwareInfo")?.also { peer = MaestroClient.Peer.LEFT }
@@ -212,7 +218,6 @@ class PixelBudsDevice(
             }
         }
         Log.i(TAG, "metadata: ${_metadata.value}")
-        maestro.subscribe(peer, "SubscribeRuntimeInfo") { payload -> Proto.parse(payload)?.let(::onRuntimeInfo) }
         maestro.subscribe(peer, "SubscribeToSettingsChanges") { payload ->
             Proto.parse(payload)?.message(4)?.fields?.forEach { setSetting(it) }
         }
@@ -248,6 +253,7 @@ class PixelBudsDevice(
         ).toSet()
         // Placement: 1 right bud in case, 2 left bud in case (false values are left out).
         val placement = info.message(7)
+        Log.i(TAG, "runtime: ${set.joinToString { "${it.component} ${it.level}% ${it.status}" }}, in case: right ${placement?.bool(1)}, left ${placement?.bool(2)}")
         _state.update { s ->
             // Keep the last known case level when the buds are out and it isn't reported.
             val kept = s.battery.filter { old -> set.none { it.component == old.component } && old.component == BatteryComponent.CASE }

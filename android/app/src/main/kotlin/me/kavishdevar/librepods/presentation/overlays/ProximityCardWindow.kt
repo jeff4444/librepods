@@ -63,7 +63,14 @@ class ProximityCardWindow(
     private var images by mutableStateOf(null as CardImages?)
 
     /** The card's pictures; [videoResId] 0 means none, and the pictures are shown instead. */
-    data class CardImages(val primaryImageRes: Int, val caseImageRes: Int?, val videoResId: Int = 0)
+    data class CardImages(
+        val primaryImageRes: Int,
+        val caseImageRes: Int?,
+        val videoResId: Int = 0,
+        // A Lottie animation in place of the video, for light and dark cards.
+        val lottieLightRes: Int = 0,
+        val lottieDarkRes: Int = 0,
+    )
     private var onConnect: () -> Unit = {}
     private var airPodsConnected by mutableStateOf(false)
 
@@ -268,6 +275,8 @@ class ProximityCardWindow(
                         primaryImageRes = images?.primaryImageRes ?: spec.primaryImageRes,
                         caseImageRes = images?.caseImageRes ?: spec.caseImageRes,
                         videoResId = images?.videoResId ?: spec.videoResId,
+                        lottieLightRes = images?.lottieLightRes ?: 0,
+                        lottieDarkRes = images?.lottieDarkRes ?: 0,
 
                         cardState = cardState,
                         onConnect = onConnect,

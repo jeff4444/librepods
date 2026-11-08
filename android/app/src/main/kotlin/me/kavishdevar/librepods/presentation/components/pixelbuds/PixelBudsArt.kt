@@ -22,4 +22,8 @@ object PixelBudsArt {
     val caseIcon: Int = R.drawable.ic_pixel_buds_case
     val leftIcon: Int = R.drawable.ic_pixel_buds_left
     val rightIcon: Int = R.drawable.ic_pixel_buds_right
+
+    // Google's "take your buds out" animation (Lottie), for the case card.
+    val takeOutLight: Int = R.raw.pixel_buds_take_out_light
+    val takeOutDark: Int = R.raw.pixel_buds_take_out_dark
 }

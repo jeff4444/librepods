@@ -439,6 +439,10 @@ class LibrePodsService: Service() {
                 )
                 return
             }
+            if (intent.action == DEBUG_SHOW_CARD && intent.getBooleanExtra("pixel", false)) {
+                _devices.value.values.filterIsInstance<PixelBudsDevice>().firstOrNull()?.let { showPixelBudsCard(it) }
+                return
+            }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
@@ -825,7 +829,13 @@ class LibrePodsService: Service() {
             is PixelBudsDevice -> {}
         }
 
-        if (device is PixelBudsDevice) connectPixelBuds(device) else device.connect()
+        if (device is PixelBudsDevice) {
+            // Pixel Buds connect when their case opens, so this is the lid opening: show the
+            // card now, with the last battery known; the first report from the buds then keeps it
+            // (both in the case) or swaps it for the island (already taken out).
+            showPixelBudsCard(device)
+            connectPixelBuds(device)
+        } else device.connect()
 
         Log.i(
             TAG,
@@ -843,8 +853,8 @@ class LibrePodsService: Service() {
     private fun connectPixelBuds(device: PixelBudsDevice) {
         if (device.heldDisconnected) return
         serviceCoroutineScope.launch(Dispatchers.IO) {
-            for (attempt in 1..3) {
-                delay(if (attempt == 1) 1500L else 3000L)
+            for (attempt in 1..4) {
+                if (attempt > 1) delay(1000L)
                 if (device.connectionState.value == ConnectionState.CONNECTED) return@launch
                 if (!isAclConnected(device.bluetoothDevice)) return@launch
                 if (device.connect()) return@launch
@@ -871,7 +881,13 @@ class LibrePodsService: Service() {
                 val connection = device.connectionNumber.value
                 if (connected && state.leftInCase != null && state.battery.isNotEmpty() && shownFor != connection) {
                     shownFor = connection
-                    if (state.bothInCase) showPixelBudsCard(device) else showIsland(device, IslandType.CONNECTED)
+                    if (state.bothInCase) {
+                        if (proximityCardWindow.isVisible) proximityCardWindow.updateBatteries(state.battery)
+                        else showPixelBudsCard(device)
+                    } else {
+                        if (proximityCardWindow.isVisible) proximityCardWindow.close()
+                        showIsland(device, IslandType.CONNECTED)
+                    }
                 } else if (connected && previous.bothInCase && state.leftInCase != null && !state.bothInCase) {
                     proximityCardWindow.close()
                     showIsland(device, IslandType.CONNECTED)
@@ -883,7 +899,7 @@ class LibrePodsService: Service() {
         }
         serviceCoroutineScope.launch {
             device.connectionState.collect { state ->
-                if (state != ConnectionState.CONNECTED && proximityCardWindow.isVisible) proximityCardWindow.close()
+                if (state == ConnectionState.DISCONNECTED && proximityCardWindow.isVisible) proximityCardWindow.close()
                 updateDeviceNotification(device)
             }
         }
@@ -897,7 +913,12 @@ class LibrePodsService: Service() {
             batteries = device.state.value.battery,
             onConnect = { serviceCoroutineScope.launch(Dispatchers.IO) { device.connectByUser() } },
             airPodsConnected = true,
-            images = ProximityCardWindow.CardImages(PixelBudsArt.buds(device.metadata.value), PixelBudsArt.case),
+            images = ProximityCardWindow.CardImages(
+                primaryImageRes = PixelBudsArt.buds(device.metadata.value),
+                caseImageRes = PixelBudsArt.case,
+                lottieLightRes = PixelBudsArt.takeOutLight,
+                lottieDarkRes = PixelBudsArt.takeOutDark,
+            ),
         )
     }
 

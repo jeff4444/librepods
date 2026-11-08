@@ -99,6 +99,8 @@ fun ProximityCardContent(
     @DrawableRes primaryImageRes: Int = coreR.drawable.img_airpods_pro_3_buds,
     @DrawableRes caseImageRes: Int? = null,
     @RawRes videoResId: Int = coreR.raw.airpods_pro_2_prox_loop,
+    @RawRes lottieLightRes: Int = 0,
+    @RawRes lottieDarkRes: Int = 0,
 
     cardState: ProximityCardState,
     onConnect: () -> Unit,
@@ -287,10 +289,11 @@ fun ProximityCardContent(
                         },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (settings.useVideo && videoResId != 0) {
+                        if (settings.useVideo && (videoResId != 0 || lottieLightRes != 0)) {
                             VideoBatteryLayout(
                                 batteryList = batteries,
                                 videoResId = videoResId,
+                                lottieResId = if (darkTheme && lottieDarkRes != 0) lottieDarkRes else lottieLightRes,
                                 surfaceColor = backgroundColor,
                                 fitContent = autoHeight
                             )
@@ -330,6 +333,7 @@ fun ProximityCardContent(
 private fun VideoBatteryLayout(
     batteryList: Set<Battery>,
     @RawRes videoResId: Int,
+    @RawRes lottieResId: Int = 0,
     surfaceColor: Color,
     // Size to the video across the full width, with each battery centered under its object.
     fitContent: Boolean = false
@@ -358,10 +362,14 @@ private fun VideoBatteryLayout(
             },
             contentAlignment = Alignment.Center
         ) {
-            LoopingVideoView(
-                videoResId = videoResId,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (lottieResId != 0) {
+                LottieLoop(resId = lottieResId, modifier = Modifier.fillMaxWidth())
+            } else {
+                LoopingVideoView(
+                    videoResId = videoResId,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         if (headsetBattery != null) {
@@ -447,6 +455,20 @@ private fun VideoBatteryLayout(
             }
         }
     }
+}
+
+/** A Lottie animation looping at its own aspect ratio (Pixel Buds' cards use Google's). */
+@Composable
+private fun LottieLoop(@RawRes resId: Int, modifier: Modifier = Modifier) {
+    val composition by com.airbnb.lottie.compose.rememberLottieComposition(
+        com.airbnb.lottie.compose.LottieCompositionSpec.RawRes(resId)
+    )
+    val ratio = composition?.bounds?.let { if (it.height() > 0) it.width().toFloat() / it.height() else null } ?: (312f / 230f)
+    com.airbnb.lottie.compose.LottieAnimation(
+        composition = composition,
+        iterations = com.airbnb.lottie.compose.LottieConstants.IterateForever,
+        modifier = modifier.aspectRatio(ratio)
+    )
 }
 
 @Composable

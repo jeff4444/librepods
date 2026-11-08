@@ -157,6 +157,8 @@ dependencies {
     implementation(project(":core"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.accompanist.permissions)
+    // Plays Google's Pixel Buds animations (Lottie) in the case card.
+    implementation(libs.lottie.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.foundation.layout)
     implementation(libs.androidx.lifecycle.process)
