@@ -298,7 +298,8 @@ fun AppleSettingsScreen(
                 }
                 item(key = "listening_mode") {
                     NoiseControlSettings(
-                        modifier = Modifier.height(100.dp),
+                        // The Apple slider needs a fixed height; the Material buttons need room for their labels.
+                        modifier = if (design.system == DesignSystem.Apple) Modifier.height(100.dp) else Modifier,
                         showOffListeningMode = state.controlStates[ControlCommandIdentifier.ALLOW_OFF_OPTION]?.getOrNull(0)?.toInt() == 1,
                         noiseControlModeValue = state.controlStates[ControlCommandIdentifier.LISTENING_MODE]?.getOrNull(0)?.toInt() ?: 3,
                         onNoiseControlModeChanged = {

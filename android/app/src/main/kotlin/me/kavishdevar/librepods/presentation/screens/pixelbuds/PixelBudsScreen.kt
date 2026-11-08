@@ -81,6 +81,8 @@ import me.kavishdevar.librepods.core.devices.PixelBudsHoldAction
 import me.kavishdevar.librepods.core.devices.PixelBudsNoiseMode
 import me.kavishdevar.librepods.core.devices.PixelBudsSetting
 import me.kavishdevar.librepods.core.devices.PixelBudsState
+import me.kavishdevar.librepods.data.app.DesignSystem
+import me.kavishdevar.librepods.presentation.design.LocalDesign
 import me.kavishdevar.librepods.presentation.components.apple.BatteryView
 import me.kavishdevar.librepods.presentation.components.apple.NoiseControlSettings
 import me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsArt
@@ -159,7 +161,8 @@ fun PixelBudsScreen(
 
             Column(modifier = Modifier.liveOnly(live), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 NoiseControlSettings(
-                    modifier = Modifier.height(100.dp),
+                    // The Apple slider needs a fixed height; the Material buttons need room for their labels.
+                    modifier = if (LocalDesign.current.system == DesignSystem.Apple) Modifier.height(100.dp) else Modifier,
                     showOffListeningMode = true,
                     noiseControlModeValue = state.noiseMode?.value ?: PixelBudsNoiseMode.NOISE_CANCELLATION.value,
                     onNoiseControlModeChanged = { value -> PixelBudsNoiseMode.from(value)?.let(device::setNoiseMode) },
