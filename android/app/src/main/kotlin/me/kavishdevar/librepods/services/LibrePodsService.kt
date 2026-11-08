@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothHeadset
@@ -242,12 +243,13 @@ class LibrePodsService: Service() {
     // decrypted with the AirPods' encryption key, to see which bytes change when the case is
     // shaken, tilted, opened or its button pressed. Logs "CaseWatch" lines. The scan delivers each
     // advert as it arrives, unlike the batched scan the app normally runs.
-    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 [--ez any true] [--ez connect true] -p me.kavishdevar.librepods.dev2
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 [--ez any true] [--ez connect true] [--ez beep true] -p me.kavishdevar.librepods.dev2
     // With "connect", the first case advert is also connected to over BLE (if it's connectable):
     // every service and characteristic is listed and the readable ones read, then it disconnects.
-    // Nothing is written to the case.
+    // Nothing is written to the case. With "beep", the connection also asks the case's
+    // unwanted-tracker (DULT) non-owner service for its details and to play a sound.
     @SuppressLint("MissingPermission")
-    private fun debugWatchCase(seconds: Int, anyApple: Boolean = false, connect: Boolean = false) {
+    private fun debugWatchCase(seconds: Int, anyApple: Boolean = false, connect: Boolean = false, beep: Boolean = false) {
         val scanner = getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
         fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
         fun decrypt(block: ByteArray): String = encKeyMap.values.joinToString(",") { key ->
@@ -276,9 +278,9 @@ class LibrePodsService: Service() {
                     "CaseWatch",
                     "$kind ${result.device.address} rssi=${result.rssi} conn=${result.isConnectable} raw=${hex(data)} plain=${decrypt(block)}"
                 )
-                if (connect && kind == "case" && !triedConnect) {
+                if ((connect || beep) && kind == "case" && !triedConnect && result.isConnectable) {
                     triedConnect = true
-                    debugConnectCase(result)
+                    debugConnectCase(result, beep)
                 }
             }
         }
@@ -426,9 +428,16 @@ class LibrePodsService: Service() {
         }
     }
 
-    /** Roadmap #6: what a BLE connection to the case offers. Logs "CaseWatch" lines; reads only. */
+    /**
+     * Roadmap #6: what a BLE connection to the case offers. Logs "CaseWatch" lines; reads only,
+     * unless [beep]: then it also talks to the case's unwanted-tracker non-owner service (DULT,
+     * the one Android's unknown-tracker alerts use): asks for its details, starts a sound, and
+     * stops it 8 s later. Commands are a 2-byte little-endian opcode written to the control point;
+     * replies come back as indications.
+     */
     @SuppressLint("MissingPermission")
-    private fun debugConnectCase(result: ScanResult) {
+    @Suppress("DEPRECATION")
+    private fun debugConnectCase(result: ScanResult, beep: Boolean = false) {
         fun hex(bytes: ByteArray?) = bytes?.joinToString("") { "%02x".format(it) } ?: "null"
         if (!result.isConnectable) {
             Log.i("CaseWatch", "the case advert isn't connectable (advertised as non-connectable); not trying")
@@ -460,11 +469,83 @@ class LibrePodsService: Service() {
             private fun readNext(gatt: BluetoothGatt) {
                 val next = toRead.removeFirstOrNull()
                 if (next == null) {
-                    Log.i("CaseWatch", "done reading; disconnecting")
-                    gatt.disconnect()
+                    if (beep) startNonOwner(gatt) else {
+                        Log.i("CaseWatch", "done reading; disconnecting")
+                        gatt.disconnect()
+                    }
                     return
                 }
                 if (!gatt.readCharacteristic(next)) readNext(gatt)
+            }
+
+            // ---- The non-owner control point ----
+            private val names = mapOf(
+                0x0003 to "get product data", 0x0004 to "get manufacturer name", 0x0005 to "get model name",
+                0x0006 to "get accessory category", 0x0007 to "get protocol version", 0x0008 to "get capabilities",
+                0x0009 to "get network ID", 0x000A to "get firmware version", 0x000B to "get battery type",
+                0x000C to "get battery level", 0x0300 to "sound start", 0x0301 to "sound stop",
+                0x0302 to "command response", 0x0303 to "sound completed",
+            )
+            private val commands = ArrayDeque(listOf(0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x0300))
+            private var controlPoint: BluetoothGattCharacteristic? = null
+            private val handler = Handler(Looper.getMainLooper())
+
+            private fun startNonOwner(gatt: BluetoothGatt) {
+                val c = gatt.getService(java.util.UUID.fromString("15190001-12f4-c226-88ed-2ac5579f2a85"))
+                    ?.getCharacteristic(java.util.UUID.fromString("8e0c0001-1d68-fb92-bf61-48377421680e"))
+                if (c == null) {
+                    Log.i("CaseWatch", "no non-owner control point; disconnecting")
+                    gatt.disconnect()
+                    return
+                }
+                controlPoint = c
+                gatt.setCharacteristicNotification(c, true)
+                val cccd = c.getDescriptor(java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")) ?: run {
+                    Log.i("CaseWatch", "non-owner: no indication descriptor; disconnecting")
+                    gatt.disconnect()
+                    return
+                }
+                cccd.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                Log.i("CaseWatch", "non-owner: turning on indications: ${gatt.writeDescriptor(cccd)}")
+            }
+
+            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                Log.i("CaseWatch", "non-owner: indications on (status $status)")
+                sendNext(gatt)
+            }
+
+            private fun sendNext(gatt: BluetoothGatt) {
+                val c = controlPoint ?: return
+                val opcode = commands.removeFirstOrNull()
+                if (opcode == null) {
+                    // The sound is playing (or refused): stop it after a while, then leave.
+                    handler.postDelayed({
+                        write(gatt, c, 0x0301)
+                        handler.postDelayed({ Log.i("CaseWatch", "non-owner: done; disconnecting"); gatt.disconnect() }, 2000)
+                    }, 8000)
+                    return
+                }
+                write(gatt, c, opcode)
+            }
+
+            private fun write(gatt: BluetoothGatt, c: BluetoothGattCharacteristic, opcode: Int) {
+                c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                c.value = byteArrayOf((opcode and 0xFF).toByte(), (opcode shr 8).toByte())
+                Log.i("CaseWatch", "non-owner -> ${names[opcode] ?: "0x%04x".format(opcode)}: ${gatt.writeCharacteristic(c)}")
+            }
+
+            override fun onCharacteristicWrite(gatt: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+                Log.i("CaseWatch", "non-owner: write status $status")
+                // Leave time for the reply before the next command.
+                if (status == 0) handler.postDelayed({ sendNext(gatt) }, 700) else handler.postDelayed({ sendNext(gatt) }, 300)
+            }
+
+            override fun onCharacteristicChanged(gatt: BluetoothGatt, c: BluetoothGattCharacteristic) {
+                val v = c.value ?: return
+                val opcode = if (v.size >= 2) (v[0].toInt() and 0xFF) or ((v[1].toInt() and 0xFF) shl 8) else -1
+                val name = names[opcode] ?: names[opcode - 0x0800]?.let { "reply to $it" } ?: "0x%04x".format(opcode)
+                val payload = v.copyOfRange(minOf(2, v.size), v.size)
+                Log.i("CaseWatch", "non-owner <- $name: ${hex(payload)} \"${payload.toString(Charsets.UTF_8).filter { it.isLetterOrDigit() || it in " .-_" }}\"")
             }
 
             @Deprecated("Deprecated in Java")
@@ -479,7 +560,8 @@ class LibrePodsService: Service() {
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == DEBUG_WATCH_CASE) {
-                debugWatchCase(intent.getIntExtra("seconds", 60), intent.getBooleanExtra("any", false), intent.getBooleanExtra("connect", false))
+                debugWatchCase(intent.getIntExtra("seconds", 60), intent.getBooleanExtra("any", false),
+                    intent.getBooleanExtra("connect", false), intent.getBooleanExtra("beep", false))
                 return
             }
             if (intent.action == DEBUG_SENSORS) {
