@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pro 2 turntable</title>
+<style>
+  html, body { margin: 0; background: #2b2b2e; color: #ddd; font: 13px monospace; }
+  canvas { display: block; background: transparent; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="status">loading…</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
+
+const params = new URLSearchParams(location.search);
+const FRAMES = Number(params.get("frames") || 1);
+const W = Number(params.get("w") || 960), H = Math.round(W * 9 / 16);
+// Hazel (colour code 10), from Google's largoBudMaterialMap.
+const HAZEL = { cap: 0x565D5A, capEnv: 0.7, topCap: 0x565D5A, topCapEmissive: 0x646464, topCapEmissiveIntensity: 0.6 };
+const TILT = Number(params.get("tilt") || 18) * Math.PI / 180;
+
+const status = document.getElementById("status");
+const log = (m) => { status.textContent = m; fetch("/log", { method: "POST", body: m }); };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+const hdr = await new RGBELoader().loadAsync("hdr_map_largo.hdr");
+scene.environment = pmrem.fromEquirectangular(hdr).texture;
+const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(2, 3, 4); scene.add(key);
+
+
+// One instance of Google's Pro 2 model per object: the buds, posed with one of its animations, and
+// the open case at rest. Laid out like the AirPods card's video: buds centred at 28% of the width,
+// case at 71%, each turning in place.
+const loader = new GLTFLoader();
+function prepare(gltf, part, animName) {
+  const model = gltf.scene;
+  if (animName) {
+    const clip = gltf.animations.find((a) => a.name === animName);
+    if (clip) { const mixer = new THREE.AnimationMixer(model); mixer.clipAction(clip).play(); mixer.setTime(clip.duration - 0.0001); }
+  }
+  const keep = (path) => part === "case"
+    ? /(case_bottom|case_top|inside_lid|outside_lid|attach_led)/.test(path) && !/(buds_left|right_buds|buds_right|bud_right|eartip|letter|earfit|bezel)/.test(path)
+    : /(buds_left|right_buds|buds_right|bud_right)/.test(path) && !/(eartip(extrasmall|large|small)|letter|earfit|bezel)/.test(path);
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    let path = "", p = o;
+    while (p) { path = (p.name || "").toLowerCase() + "/" + path; p = p.parent; }
+    o.userData.kept = keep(path);
+    if (!o.userData.kept) { o.material = new THREE.MeshBasicMaterial({ visible: false }); return; }
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const fresh = mats.map((m) => {
+      const c = m.clone();
+      if (/(case_bottom_outer|outside_lid)/.test(path) && part === "case") {
+        c.color.setHex(HAZEL.cap); c.map = null; c.envMapIntensity = HAZEL.capEnv;
+        if ("roughness" in c) c.roughness = Math.max(c.roughness, 0.55);
+        if ("metalness" in c) c.metalness = 0.0;
+      }
+      if (/buds_cap_[lr]/.test(path)) { c.color.setHex(HAZEL.cap); c.map = null; c.envMapIntensity = HAZEL.capEnv; }
+      if (/mesh_top_cap_[lr]/.test(path)) {
+        c.color.setHex(HAZEL.topCap); c.map = null;
+        if (c.emissive) { c.emissive.setHex(HAZEL.topCapEmissive); c.emissiveIntensity = HAZEL.topCapEmissiveIntensity; }
+      }
+      c.needsUpdate = true;
+      return c;
+    });
+    o.material = Array.isArray(o.material) ? fresh : fresh[0];
+  });
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  model.traverse((o) => { if (o.isMesh && o.userData.kept) box.expandByObject(o); });
+  model.position.sub(box.getCenter(new THREE.Vector3()));
+  const turn = new THREE.Group(); turn.add(model);
+  const tilt = new THREE.Group(); tilt.add(turn); tilt.rotation.x = TILT;
+  return { tilt, turn, size: box.getSize(new THREE.Vector3()) };
+}
+const buds = prepare(await loader.loadAsync("largo.glb"), "buds", params.get("anim") || "Tilted_Buds_Zoom_In");
+const kase = prepare(await loader.loadAsync("largo.glb"), "case", null);
+scene.add(buds.tilt); scene.add(kase.tilt);
+
+// Orthographic, so the two centres land exactly where the card puts the batteries.
+const viewH = Math.max(kase.size.y, kase.size.z) * Number(params.get("fit") || 1.45);
+const viewW = viewH * W / H;
+const camera = new THREE.OrthographicCamera(-viewW / 2, viewW / 2, viewH / 2, -viewH / 2, 0.001, 10);
+camera.position.set(0, 0, 1); camera.lookAt(0, 0, 0);
+buds.tilt.position.x = (0.28 - 0.5) * viewW;
+kase.tilt.position.x = (0.71 - 0.5) * viewW;
+buds.tilt.position.y = Number(params.get("budsy") || 0) * viewH;
+log(`pair: buds ${buds.size.toArray().map(v=>v.toFixed(3))} case ${kase.size.toArray().map(v=>v.toFixed(3))}`);
+
+for (let i = 0; i < FRAMES; i++) {
+  const a = (i / FRAMES) * Math.PI * 2;
+  buds.turn.rotation.y = a; kase.turn.rotation.y = a;
+  renderer.render(scene, camera);
+  const blob = await new Promise((r) => renderer.domElement.toBlob(r, "image/png"));
+  await fetch(`/frame/${FRAMES === 1 ? "test_" + (params.get("tag") || "pair") : String(i).padStart(3, "0")}`, { method: "POST", body: blob });
+  status.textContent = `frame ${i + 1}/${FRAMES}`;
+}
+log(`done ${FRAMES} frames`);
+</script>
+</body>
+</html>

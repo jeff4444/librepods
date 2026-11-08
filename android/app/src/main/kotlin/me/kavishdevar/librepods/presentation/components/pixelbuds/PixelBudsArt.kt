@@ -23,9 +23,9 @@ object PixelBudsArt {
     val leftIcon: Int = R.drawable.ic_pixel_buds_left
     val rightIcon: Int = R.drawable.ic_pixel_buds_right
 
-    // The Pro 2 turning around, rendered from Google's 3D model (Hazel; the other colours use it
-    // too until rendered).
-    val pro2Turntable: Int = R.raw.pixel_buds_pro_2_hazel_turntable
+    // The Pro 2's buds and case turning around, rendered from Google's 3D model (Hazel; the other
+    // colours use it too until rendered).
+    val pro2Turntable: Int = R.raw.pixel_buds_pro_2_hazel_card
 
     // Google's "take your buds out" animation (Lottie), for the other Pixel Buds' case card.
     val takeOutLight: Int = R.raw.pixel_buds_take_out_light
