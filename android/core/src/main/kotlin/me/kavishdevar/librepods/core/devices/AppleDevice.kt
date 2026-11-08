@@ -209,7 +209,7 @@ class AppleDevice(
     }
 
     override fun connectByUser(): Boolean {
-        if (_settings.value.stayDisconnected) Log.i(TAG, "connect asked for by the user, lifting the hold")
+        Log.i(TAG, "connect asked for by the user${if (_settings.value.stayDisconnected) ", lifting the hold" else ""}")
         _settings.update { it.copy(stayDisconnected = false) }
         val connected = connect()
         // A disconnect takes the audio down too (bluetoothDevice.disconnect below), so ask Android

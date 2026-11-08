@@ -298,6 +298,7 @@ class BLEManager(
         val lid = data[8].toInt() and 0xFF
         val color = DeviceColor.fromProximity(data[9])
         val state = AccessoryState.fromProximity(data[10])
+        val stateByte = data[10].toInt() and 0xFF
 
         val primaryLeft = ((status shr 5) and 0x01) == 1
         val thisInCase = ((status shr 6) and 0x01) == 1
@@ -370,13 +371,14 @@ class BLEManager(
                 Log.d(TAG, "primary component changed for ${device.macAddress.toRedactedString()}: ${if (primaryLeft) DeviceComponent.LEFT else DeviceComponent.RIGHT}")
             }
 
-            if (previousState.state != state) {
+            if (previousState.state != state || previousState.accessoryStateByte != stateByte) {
                 device.updateState { appleState ->
                     appleState.copy(
-                        state = state
+                        state = state,
+                        accessoryStateByte = stateByte
                     )
                 }
-                Log.d(TAG, "state changed for ${device.macAddress.toRedactedString()}: $state")
+                Log.d(TAG, "state changed for ${device.macAddress.toRedactedString()}: $state (0x${"%02x".format(stateByte)})")
             }
 
             if (previousState.caseLidOpen != lidOpen) {

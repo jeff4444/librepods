@@ -102,6 +102,9 @@ private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAN
 private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
 private const val DEBUG_WATCH_CASE = "me.kavishdevar.librepods.DEBUG_WATCH_CASE"
 private const val DEBUG_SENSORS = "me.kavishdevar.librepods.DEBUG_SENSORS"
+// Sets or lifts the disconnect hold without connecting:
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HOLD --ez on false -p me.kavishdevar.librepods.dev2
+private const val DEBUG_HOLD = "me.kavishdevar.librepods.DEBUG_HOLD"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -380,6 +383,11 @@ class LibrePodsService: Service() {
                     onConnect = { device.connectByUser() },
                     airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                 )
+                DEBUG_HOLD -> {
+                    val on = intent.getBooleanExtra("on", false)
+                    device.updateSettings { it.copy(stayDisconnected = on) }
+                    Log.i(TAG, "debug: disconnect hold ${if (on) "set" else "lifted"} for ${device.macAddress.toRedactedString()}")
+                }
             }
         }
     }
@@ -604,6 +612,7 @@ class LibrePodsService: Service() {
             // ordinary apps can't get it, so other apps on the phone can't drive these commands.
             registerReceiver(debugReceiver, IntentFilter().apply {
                 addAction(DEBUG_SHOW_ISLAND)
+                addAction(DEBUG_HOLD)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)
@@ -766,19 +775,48 @@ class LibrePodsService: Service() {
     /**
      * Android's own Disconnect (Bluetooth settings, the quick settings panel) takes only the audio
      * down. LibrePods' control link keeps the AirPods attached, and the audio comes straight back,
-     * so the AirPods never disconnect. A disconnect the phone starts shows as DISCONNECTING; when
-     * one starts and LibrePods didn't ask for it, finish it as a user disconnect.
+     * so the AirPods never disconnect. When the audio starts disconnecting and LibrePods didn't
+     * ask for it, finish it as a user disconnect, but only if the connection itself stays up: the
+     * AirPods dropping this phone (into the case, or off to another device) also reports the
+     * audio as DISCONNECTING, after the connection has already gone.
      */
     private fun onAudioDisconnecting(mac: MacAddress, profile: String) {
         val device = devices.value[mac] as? AppleDevice ?: return
         if (device.heldDisconnected || device.connectionState.value != ConnectionState.CONNECTED) return
         if (SystemClock.elapsedRealtime() - device.audioDisconnectedByUsAt < 5_000) return
-        // Turning Bluetooth off disconnects everything; that isn't a disconnect of these AirPods.
-        if (getSystemService(BluetoothManager::class.java)?.adapter?.state != BluetoothAdapter.STATE_ON) return
-        Log.i(TAG, "Android is disconnecting $profile from ${mac.toRedactedString()}, not LibrePods: treating it as the user disconnecting")
-        device.disconnectByUser()
-        updateDeviceNotification(device = device)
+        serviceCoroutineScope.launch {
+            delay(1.5.seconds)
+            if (device.heldDisconnected) return@launch
+            // Turning Bluetooth off disconnects everything; that isn't a disconnect of these AirPods.
+            if (getSystemService(BluetoothManager::class.java)?.adapter?.state != BluetoothAdapter.STATE_ON) return@launch
+            if (device.connectionState.value != ConnectionState.CONNECTED || !isAclConnected(device.bluetoothDevice)) {
+                Log.i(TAG, "$profile went down with the connection to ${mac.toRedactedString()}: the AirPods left, not a user disconnect")
+                return@launch
+            }
+            Log.i(TAG, "Android disconnected $profile from ${mac.toRedactedString()} while the connection stayed up: treating it as the user disconnecting")
+            device.disconnectByUser()
+            updateDeviceNotification(device = device)
+        }
     }
+
+    /**
+     * What these AirPods are doing with another device, from their broadcast, or null when they
+     * aren't connected to one. Connected but idle counts: like an iPhone, LibrePods leaves the
+     * AirPods with that device until this phone has audio to play (the media and call triggers
+     * in attemptConnect handle that, per the connection settings). States we haven't identified
+     * count as in use. Null too when this phone already has a connection to them, since then
+     * the state may be this phone's own. The user's own Connect doesn't check this.
+     */
+    private fun busyElsewhere(device: AppleDevice): String? {
+        val state = device.state.value
+        if (state.accessoryStateByte < 0 || state.state == AccessoryState.Disconnected) return null
+        if (isAclConnected(device.bluetoothDevice)) return null
+        return if (state.state == AccessoryState.Unknown) "state 0x${"%02x".format(state.accessoryStateByte)}" else state.state.name
+    }
+
+    private fun isAclConnected(bluetoothDevice: BluetoothDevice): Boolean = runCatching {
+        BluetoothDevice::class.java.getMethod("isConnected").invoke(bluetoothDevice) as Boolean
+    }.getOrDefault(false)
 
     private fun profileStateName(state: Int) = when (state) {
         BluetoothProfile.STATE_DISCONNECTED -> "disconnected"
@@ -971,7 +1009,10 @@ class LibrePodsService: Service() {
 
                 if (connectIfUp && isConnectedMethod.invoke(bluetoothDevice) as Boolean) {
                     if (device.heldDisconnected) turnAway(device, "it was connected when LibrePods started")
-                    else device.connect()
+                    else {
+                        Log.i(TAG, "${device.macAddress.toRedactedString()} was connected when LibrePods started, connecting")
+                        device.connect()
+                    }
                 }
             }
         }
@@ -1034,8 +1075,13 @@ class LibrePodsService: Service() {
                                     // ear state changes) rather than route audio to the case.
                                     Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby with both buds in the case, not connecting yet")
                                 } else {
-                                    Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, connecting")
-                                    device.connect()
+                                    val busy = busyElsewhere(device)
+                                    if (busy != null) {
+                                        Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, not connecting: connected to another device ($busy)")
+                                    } else {
+                                        Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, connecting")
+                                        device.connect()
+                                    }
                                 }
                             }
                         }
@@ -1161,8 +1207,13 @@ class LibrePodsService: Service() {
                         budsInCase(previousState) && !budsInCase(state)
                     ) {
                         // We hold off connecting while both buds are in the case; one just came out.
-                        Log.i(TAG, "a bud left the case of ${device.macAddress.toRedactedString()}, connecting")
-                        device.connect()
+                        val busy = busyElsewhere(device)
+                        if (busy != null) {
+                            Log.i(TAG, "a bud left the case of ${device.macAddress.toRedactedString()}, not connecting: connected to another device ($busy)")
+                        } else {
+                            Log.i(TAG, "a bud left the case of ${device.macAddress.toRedactedString()}, connecting")
+                            device.connect()
+                        }
                     }
 
                     Log.d(TAG, "updating notification")

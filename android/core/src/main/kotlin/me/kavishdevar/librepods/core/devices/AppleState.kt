@@ -23,6 +23,9 @@ data class AppleState(
     val owns: Boolean = true,
 
     val state: AccessoryState = AccessoryState.Unknown, // from BLE
+    // The raw connection-state byte behind [state] (-1 before any broadcast), for values
+    // AccessoryState doesn't name yet, such as 0x08.
+    val accessoryStateByte: Int = -1,
     val caseLidOpen: Boolean = false,
     val lastDisconnected: Long = -1L,
 
