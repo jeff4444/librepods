@@ -105,7 +105,13 @@ object PixelBudsProbe {
             ScanFilter.Builder().setServiceData(FAST_PAIR, ByteArray(0), ByteArray(0)).build(),
             ScanFilter.Builder().setManufacturerData(GOOGLE, ByteArray(0)).build(),
         )
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        // The buds' Fast Pair broadcasts are extended advertising (secondary PHY 1M or 2M), which
+        // Android only reports to scans that turn legacy-only off.
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setLegacy(false)
+            .setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+            .build()
         if (unfiltered) scanner?.startScan(null, settings, callback) else scanner?.startScan(filters, settings, callback)
         Log.i(TAG, "scanning for $seconds s")
         scope.launch {

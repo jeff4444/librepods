@@ -466,7 +466,36 @@ class LibrePodsService: Service() {
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             bleManager.setScreenOn(intent.action == Intent.ACTION_SCREEN_ON)
+            screenOn = intent.action == Intent.ACTION_SCREEN_ON
+            updateLidWatcher()
         }
+    }
+
+    private var screenOn = true
+
+    /** Shows the Pixel Buds case card when their lid opens (see [PixelBudsLidWatcher]). */
+    private val pixelBudsLidWatcher by lazy {
+        PixelBudsLidWatcher(
+            context = this,
+            onLidOpen = {
+                _devices.value.values.filterIsInstance<PixelBudsDevice>()
+                    .firstOrNull { it.connectionState.value != ConnectionState.CONNECTED }
+                    ?.let { showPixelBudsCard(it) }
+            },
+            onLidClosed = {
+                _devices.value.values.filterIsInstance<PixelBudsDevice>()
+                    .firstOrNull { cardShows(it) && it.connectionState.value != ConnectionState.CONNECTED }
+                    ?.let { proximityCardWindow.close() }
+            },
+        )
+    }
+
+    /** Watch for the Pixel Buds lid only while it matters: screen on, buds bonded, not connected. */
+    private fun updateLidWatcher() {
+        val buds = _devices.value.values.filterIsInstance<PixelBudsDevice>()
+        val wanted = screenOn && buds.isNotEmpty() &&
+            buds.none { it.connectionState.value == ConnectionState.CONNECTED || isAclConnected(it.bluetoothDevice) }
+        pixelBudsLidWatcher.setActive(wanted)
     }
 
     private val healthConnectHeartRateWriter by lazy {
@@ -673,6 +702,8 @@ class LibrePodsService: Service() {
         loadDevices()
 
         bleManager.start()
+        screenOn = getSystemService(android.os.PowerManager::class.java)?.isInteractive != false
+        updateLidWatcher()
         observeHeadMouse()
         registerReceiver(screenStateReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
@@ -761,6 +792,7 @@ class LibrePodsService: Service() {
 
     override fun onDestroy() {
         healthConnectHeartRateWriter.flush()
+        runCatching { pixelBudsLidWatcher.setActive(false) }
         runCatching { unregisterReceiver(screenStateReceiver) }
         if (BuildConfig.DEBUG) runCatching { unregisterReceiver(debugReceiver) }
         unregisterBluetoothReceivers()
@@ -901,6 +933,7 @@ class LibrePodsService: Service() {
             device.connectionState.collect { state ->
                 if (state == ConnectionState.DISCONNECTED && cardShows(device)) proximityCardWindow.close()
                 updateDeviceNotification(device)
+                updateLidWatcher()
             }
         }
     }
