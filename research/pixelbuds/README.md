@@ -209,6 +209,13 @@ app). `WriteSetting` itself is a oneof of five families (fields 1-5); 4 is these
 Still unnamed: 20, 23 (message), 24 and 26 (enums), 25, 30, 31 (message), 32 (written by the
 app's settings writer), 33, 35 (message), 39.
 
+Types of the unnamed ones (from the schema): 20, 25, 30, 32, 33, 39 are bools (20 and 25 don't
+answer reads; on this pair 30=0, 32=1, 33=1, 39=0). 24 and 26 use the same three-value enum check
+as head gestures (`a.aZ`: 0, 1, 2 valid), so likely the same "not set / off / on" switch; both 0.
+23, 31 and 35 are messages whose classes are empty in Google's build (fields stripped as unread),
+and nothing reads them back: 23 is shaped like one bud's press-and-hold entry (`{4: {1: 0}}`, an
+unset gesture slot?), 31 is `{1: 0f, 2: 0f, 3: 5}`, 35 comes back empty.
+
 Without Google's app, Android's Bluetooth settings page for the buds only offers a few options,
 so naming the rest by toggling needs Google's app back (and then LibrePods loses Maestro to it).
 

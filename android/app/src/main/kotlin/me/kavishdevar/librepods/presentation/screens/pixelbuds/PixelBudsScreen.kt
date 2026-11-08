@@ -562,14 +562,54 @@ private fun LottieLoop(@RawRes resId: Int, modifier: Modifier = Modifier) {
 private fun UnnamedSettings(state: PixelBudsState) {
     val unnamed = state.settings.filterKeys { it !in PixelBudsSetting.NAMED }.toSortedMap()
     if (unnamed.isEmpty()) return
-    StyledList(
-        key = unnamed.keys.toList(),
-        title = "Unnamed settings (experimental)",
-        description = "Values the buds report that Google's app doesn't name either (it reads none of them by name). " +
-            "LibrePods logs any change to them."
-    ) {
-        for ((id, field) in unnamed) {
-            styledListItem(contentText = "Setting $id", supportingText = Proto.describe(field), enabled = false)
+    val switches = unnamed.filterKeys { it in PixelBudsSetting.UNKNOWN_SWITCHES || it in PixelBudsSetting.UNKNOWN_TRISTATE }
+    val others = unnamed.filterKeys { it !in switches }
+
+    // Read-only for now: shown as what they are, to be tried one by one.
+    if (switches.isNotEmpty()) {
+        StyledList(
+            key = switches.mapValues { Proto.describe(it.value) },
+            title = "Unknown switches",
+            description = "On/off settings the buds have that Google's app doesn't name. Read-only until we work out what they do."
+        ) {
+            for ((id, field) in switches) {
+                val value = field.varint.toInt()
+                val tristate = id in PixelBudsSetting.UNKNOWN_TRISTATE
+                styledToggle(
+                    label = "Setting $id",
+                    description = if (tristate) {
+                        "Three-way, like head gestures: " + when (value) { 0 -> "never set"; 1 -> "off"; 2 -> "on"; else -> "value $value" }
+                    } else {
+                        "On/off; purpose unknown"
+                    },
+                    checked = if (tristate) value == 2 else value != 0,
+                    enabled = false,
+                    onCheckedChange = { },
+                )
+            }
+        }
+    }
+    if (others.isNotEmpty()) {
+        StyledList(
+            key = others.mapValues { Proto.describe(it.value) },
+            title = "Unknown values",
+            description = "Settings with more than on/off in them. Google's app doesn't read these either; best guesses from their shape."
+        ) {
+            for ((id, field) in others) {
+                val m = field.bytes?.let(Proto::parse)
+                val guess = when (id) {
+                    PixelBudsSetting.UNKNOWN_GESTURE_SLOT -> {
+                        val action = m?.message(4)?.int(1) ?: 0
+                        "Shaped like one bud's press-and-hold entry: probably another gesture's action. " +
+                            if (action == 0) "Unset." else "Action $action."
+                    }
+                    PixelBudsSetting.UNKNOWN_FLOATS_AND_LEVEL ->
+                        "Two decimals (${m?.float(1) ?: 0f}, ${m?.float(2) ?: 0f}) and a level (${m?.int(3) ?: 0}): maybe a left/right pair with a mode or step."
+                    PixelBudsSetting.UNKNOWN_MESSAGE -> "A message the buds send empty (everything at its default)."
+                    else -> Proto.describe(field)
+                }
+                styledListItem(contentText = "Setting $id", supportingText = guess, enabled = false)
+            }
         }
     }
 }

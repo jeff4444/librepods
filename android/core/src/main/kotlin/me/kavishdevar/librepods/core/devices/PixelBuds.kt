@@ -96,6 +96,17 @@ object PixelBudsSetting {
 
     val NAMED = READ + listOf(TEST_MODE, SETUP_FINISHED, SETUP_MODE, LAST_SAVED_EQ, LIVE_TRANSLATE)
 
+    // Unnamed, typed from Google's schema (its SettingValue class): on/off settings...
+    val UNKNOWN_SWITCHES = listOf(20, 25, 30, 32, 33, 39)
+    // ...three-way ones, the same enum as head gestures (0 not set, 1 off, 2 on)...
+    val UNKNOWN_TRISTATE = listOf(24, 26)
+    // ...and messages whose fields Google's app doesn't read (its build stripped them).
+    /** Shaped like one bud's press-and-hold entry: {4: {1: action}}. */
+    const val UNKNOWN_GESTURE_SLOT = 23
+    /** Two floats and a number: {1: float, 2: float, 3: int}. */
+    const val UNKNOWN_FLOATS_AND_LEVEL = 31
+    const val UNKNOWN_MESSAGE = 35
+
     const val EQ_MIN = -6f
     const val EQ_MAX = 6f
 
