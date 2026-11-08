@@ -222,6 +222,12 @@ as head gestures (`a.aZ`: 0, 1, 2 valid), so likely the same "not set / off / on
 and nothing reads them back: 23 is shaped like one bud's press-and-hold entry (`{4: {1: 0}}`, an
 unset gesture slot?), 31 is `{1: 0f, 2: 0f, 3: 5}`, 35 comes back empty.
 
+Tried 2026-11-08 (switches on the page, each flipped and back): 24, 26, 30, 32, 33 and 39 were
+all accepted and stored (24 read back after a reconnect), and none changed anything noticeable in
+listening, noise control, taps or taking a bud out. Taking one bud out always switches the noise
+mode to Adaptive (13 = 4) and back on reinsertion, with 33 off or on: that's the buds' own
+single-bud behaviour (settings 9/10, noise mode with one/two buds, which don't answer reads).
+
 Without Google's app, Android's Bluetooth settings page for the buds only offers a few options,
 so naming the rest by toggling needs Google's app back (and then LibrePods loses Maestro to it).
 
