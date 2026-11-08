@@ -24,4 +24,8 @@ quaternion's rotation to a median 0.2 deg per move on all three axes.
 The motion descriptor's `H2HTransformation` (8 bytes) is a unit quaternion: four int16 LE over
 32768 in x, y, z, w order. Rotating the bud-frame axes by it turned measured yaw into
 (-0.13, -0.11, 0.99) and pitch into (0.95, 0.17, 0.27): Apple's head frame, yaw about Z and pitch
-about X. On this pair it read `cc50d614c552af32` = (0.631, 0.163, 0.647, 0.396).
+about X. Each bud has its own, mirrored: on this pair the left bud (serial HY8H...) sent
+`cc50d614c552af32` = (0.631, 0.163, 0.647, 0.396) and the right bud (H3TH...) sent
+`cc502aeb3badaf32` = (0.631, -0.163, -0.647, 0.396). The descriptor comes from the bud that
+streams motion (its `SerialNumber` says which), and the AirPods don't always send descriptors on
+connecting, so ask with request_all_descriptors before relying on it.

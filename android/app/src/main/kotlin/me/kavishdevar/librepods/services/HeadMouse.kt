@@ -120,6 +120,10 @@ class HeadMouseController(
             lastTimestamp = null
             lastSampleAt = SystemClock.elapsedRealtime()
             device.setMotionStream(STREAM_INTERVAL)
+            // Each bud has its own (mirrored) head-to-headphone transform, and the AirPods don't
+            // always send their descriptors on connecting: ask, so the transform matches the bud
+            // that streams.
+            device.aacp.requestSensorDescriptors()
             jobs = listOf(
                 scope.launch { device.motionSamples.collect { onSample(it) } },
                 // The stream stops when the bud carrying it leaves an ear (roadmap #8); restart it.
@@ -129,6 +133,8 @@ class HeadMouseController(
                         if (SystemClock.elapsedRealtime() - lastSampleAt > 1_500) {
                             Log.i(TAG, "no motion for a while, restarting the stream")
                             device.setMotionStream(STREAM_INTERVAL)
+                            // A stalled stream usually means the other bud now carries it.
+                            device.aacp.requestSensorDescriptors()
                             lastSampleAt = SystemClock.elapsedRealtime()
                         }
                     }
@@ -261,7 +267,8 @@ class HeadMouseController(
         const val DEAD_ZONE = 0.025f
         const val ACCELERATION = 1.5f
 
-        // Measured on one pair of AirPods Pro 3, used until the AirPods send their own.
+        // The left bud of one pair of AirPods Pro 3 (the right bud's is mirrored: y and z negated),
+        // used only for the moment before the AirPods answer the descriptor request.
         val DEFAULT_HEAD_TO_HEADPHONE = Quaternion(w = 0.396f, x = 0.6312f, y = 0.1628f, z = 0.6466f)
     }
 }
