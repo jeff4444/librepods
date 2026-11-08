@@ -446,7 +446,7 @@ class LibrePodsService: Service() {
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
-                DEBUG_SHOW_CARD -> proximityCardWindow.show(
+                DEBUG_SHOW_CARD -> proximityCardWindow.also { cardDevice = device.macAddress }.show(
                     name = displayName(device),
                     batteries = device.state.value.battery,
                     spec = AirPodsSpecs.getSpec(device.metadata.value.model),
@@ -882,16 +882,16 @@ class LibrePodsService: Service() {
                 if (connected && state.leftInCase != null && state.battery.isNotEmpty() && shownFor != connection) {
                     shownFor = connection
                     if (state.bothInCase) {
-                        if (proximityCardWindow.isVisible) proximityCardWindow.updateBatteries(state.battery)
+                        if (cardShows(device)) proximityCardWindow.updateBatteries(state.battery)
                         else showPixelBudsCard(device)
                     } else {
-                        if (proximityCardWindow.isVisible) proximityCardWindow.close()
+                        if (cardShows(device)) proximityCardWindow.close()
                         showIsland(device, IslandType.CONNECTED)
                     }
                 } else if (connected && previous.bothInCase && state.leftInCase != null && !state.bothInCase) {
-                    proximityCardWindow.close()
+                    if (cardShows(device)) proximityCardWindow.close()
                     showIsland(device, IslandType.CONNECTED)
-                } else if (proximityCardWindow.isVisible && !state.battery.hasSameState(previous.battery)) {
+                } else if (cardShows(device) && !state.battery.hasSameState(previous.battery)) {
                     proximityCardWindow.updateBatteries(state.battery)
                 }
                 previous = state
@@ -899,14 +899,21 @@ class LibrePodsService: Service() {
         }
         serviceCoroutineScope.launch {
             device.connectionState.collect { state ->
-                if (state == ConnectionState.DISCONNECTED && proximityCardWindow.isVisible) proximityCardWindow.close()
+                if (state == ConnectionState.DISCONNECTED && cardShows(device)) proximityCardWindow.close()
                 updateDeviceNotification(device)
             }
         }
     }
 
+    // The device the case card is showing, so one device's updates don't land on another's card
+    // (AirPods broadcasts kept updating the battery on the Pixel Buds card).
+    private var cardDevice: MacAddress? = null
+
+    private fun cardShows(device: Device<*, *, *>) = proximityCardWindow.isVisible && cardDevice == device.macAddress
+
     private fun showPixelBudsCard(device: PixelBudsDevice) {
         if (!Settings.canDrawOverlays(this)) return
+        cardDevice = device.macAddress
         Log.i(TAG, "showing the case card for ${device.macAddress.toRedactedString()}")
         proximityCardWindow.show(
             name = displayName(device),
@@ -1199,7 +1206,7 @@ class LibrePodsService: Service() {
         serviceCoroutineScope.launch {
             var previousConnectionState = ConnectionState.DISCONNECTED
             device.connectionState.collect { state ->
-                if (proximityCardWindow.isVisible) proximityCardWindow.updateConnectionState(state == ConnectionState.CONNECTED)
+                if (device is AppleDevice && cardShows(device)) proximityCardWindow.updateConnectionState(state == ConnectionState.CONNECTED)
 
                 if (device is AppleDevice && state == ConnectionState.CONNECTED && previousConnectionState != ConnectionState.CONNECTED) {
                     serviceCoroutineScope.launch {
@@ -1321,6 +1328,7 @@ class LibrePodsService: Service() {
                                 state.battery.find { it.component == BatteryComponent.RIGHT }?.status == BatteryStatus.OPTIMIZED_CHARGING
 
                             if (state.componentState.all { it.status == ComponentStatus.IN_CASE } || (leftInCase && rightInCase)) {
+                                cardDevice = device.macAddress
                                 proximityCardWindow.show(
                                     name = displayName(device),
                                     batteries = state.battery,
@@ -1330,8 +1338,9 @@ class LibrePodsService: Service() {
                                     },
                                     airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                                 )
-                            } else proximityCardWindow.close()
+                            } else if (cardShows(device)) proximityCardWindow.close()
                         } else {
+                            cardDevice = device.macAddress
                             proximityCardWindow.show(
                                 name = displayName(device),
                                 batteries = state.battery,
@@ -1342,7 +1351,7 @@ class LibrePodsService: Service() {
                                 airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                             )
                         }
-                    } else proximityCardWindow.close()
+                    } else if (cardShows(device)) proximityCardWindow.close()
                 }
 
                 // On its own, not a branch of the when below, which runs only one branch per update
@@ -1447,7 +1456,7 @@ class LibrePodsService: Service() {
                             islandWindow.updateBattery(displayBatteryLevel)
                         }
 
-                        if (proximityCardWindow.isVisible) proximityCardWindow.updateBatteries(state.battery)
+                        if (cardShows(device)) proximityCardWindow.updateBatteries(state.battery)
 
                         updateDeviceNotification(device = device)
 
