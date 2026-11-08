@@ -1003,7 +1003,8 @@ class LibrePodsService: Service() {
      * audio as DISCONNECTING, after the connection has already gone.
      */
     private fun onAudioDisconnecting(mac: MacAddress, profile: String) {
-        val device = devices.value[mac] as? AppleDevice ?: return
+        // Pixel Buds too: LibrePods' Maestro channel holds their connection open the same way.
+        val device = devices.value[mac] ?: return
         if (device.heldDisconnected || device.connectionState.value != ConnectionState.CONNECTED) return
         if (SystemClock.elapsedRealtime() - device.audioDisconnectedByUsAt < 5_000) return
         serviceCoroutineScope.launch {
@@ -1012,7 +1013,7 @@ class LibrePodsService: Service() {
             // Turning Bluetooth off disconnects everything; that isn't a disconnect of these AirPods.
             if (getSystemService(BluetoothManager::class.java)?.adapter?.state != BluetoothAdapter.STATE_ON) return@launch
             if (device.connectionState.value != ConnectionState.CONNECTED || !isAclConnected(device.bluetoothDevice)) {
-                Log.i(TAG, "$profile went down with the connection to ${mac.toRedactedString()}: the AirPods left, not a user disconnect")
+                Log.i(TAG, "$profile went down with the connection to ${mac.toRedactedString()}: the device left, not a user disconnect")
                 return@launch
             }
             Log.i(TAG, "Android disconnected $profile from ${mac.toRedactedString()} while the connection stayed up: treating it as the user disconnecting")
@@ -1249,7 +1250,10 @@ class LibrePodsService: Service() {
             }
             is PixelBudsDevice -> {
                 observePixelBuds(device)
-                if (connectIfUp && isConnectedMethod.invoke(bluetoothDevice) as Boolean) connectPixelBuds(device)
+                if (connectIfUp && isConnectedMethod.invoke(bluetoothDevice) as Boolean) {
+                    if (device.heldDisconnected) turnAway(device, "it was connected when LibrePods started")
+                    else connectPixelBuds(device)
+                }
             }
             null -> {}
         }
@@ -2001,6 +2005,21 @@ class LibrePodsService: Service() {
                         .setPriority(NotificationCompat.PRIORITY_LOW)
                         .setOngoing(true)
                         .setOnlyAlertOnce(true)
+                    if (device.connectionState.value == ConnectionState.AVAILABLE) {
+                        builder.addAction(
+                            R.drawable.ic_power,
+                            getString(R.string.connect),
+                            PendingIntent.getService(
+                                this,
+                                notificationId + 5,
+                                Intent(this, LibrePodsService::class.java).apply {
+                                    action = LibrePodsIntents.ACTION_CONNECT
+                                    putExtra(LibrePodsIntents.Extras.MAC_ADDRESS, device.macAddress.toString())
+                                },
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+                        )
+                    }
                     if (device.connectionState.value == ConnectionState.CONNECTED) {
                         // Same numbering as AirPods: 1 off, 2 noise cancellation, 3 transparency, 4 adaptive.
                         val current = state.noiseMode?.value

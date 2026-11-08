@@ -235,6 +235,9 @@ sealed interface Device<S: DeviceState, T: DeviceSettings, M: DeviceMetadata> {
         }, BluetoothProfile.HEADSET)
     }
 
+    /** When LibrePods last took the audio down itself (elapsedRealtime), to tell those disconnects from Android's own. */
+    val audioDisconnectedByUsAt: Long get() = 0L
+
     fun disconnectAudio() {
         disconnectA2dp()
         disconnectHeadset()

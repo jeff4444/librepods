@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -162,7 +163,7 @@ data class PixelBudsState(
 }
 
 data class PixelBudsSettings(
-    // See Device.heldDisconnected. Not saved across restarts yet.
+    // See Device.heldDisconnected. Saved across restarts (PixelBudsDevice's preferences).
     val stayDisconnected: Boolean = false,
 ) : DeviceSettings
 
@@ -270,16 +271,34 @@ class PixelBudsDevice(
 
     override fun disconnectByUser() {
         Log.i(TAG, "disconnected by the user; holding off reconnecting until they connect again")
-        _settings.update { it.copy(stayDisconnected = true) }
+        setHeld(true)
         disconnectAudio()
         disconnect()
     }
 
     override fun connectByUser(): Boolean {
-        Log.i(TAG, "connect asked for by the user")
-        _settings.update { it.copy(stayDisconnected = false) }
+        Log.i(TAG, "connect asked for by the user${if (heldDisconnected) ", lifting the hold" else ""}")
+        setHeld(false)
+        // Refused without a companion device association; opening Maestro below brings the
+        // connection up anyway.
         if (!isAclConnected()) runCatching { bluetoothDevice.connect() }
-        return connect()
+        val connected = connect()
+        // A disconnect took the audio down too; ask for it back.
+        if (connected) connectAudio()
+        return connected
+    }
+
+    private fun setHeld(held: Boolean) {
+        _settings.update { it.copy(stayDisconnected = held) }
+        prefs.edit().putBoolean(heldKey, held).apply()
+    }
+
+    @Volatile override var audioDisconnectedByUsAt = 0L
+        private set
+
+    override fun disconnectAudio() {
+        audioDisconnectedByUsAt = SystemClock.elapsedRealtime()
+        super.disconnectAudio()
     }
 
     private fun markDisconnected() {
@@ -383,8 +402,10 @@ class PixelBudsDevice(
     // restarts too) and shown as last known while both buds are out.
     private val prefs = context.getSharedPreferences("pixel_buds", Context.MODE_PRIVATE)
     private val caseKey = "case_battery_${bluetoothDevice.address}"
+    private val heldKey = "held_disconnected_${bluetoothDevice.address}"
 
     init {
+        if (prefs.getBoolean(heldKey, false)) _settings.update { it.copy(stayDisconnected = true) }
         val saved = prefs.getString(caseKey, null)?.split(",")
         val level = saved?.getOrNull(0)?.toIntOrNull()
         val at = saved?.getOrNull(1)?.toLongOrNull() ?: 0L

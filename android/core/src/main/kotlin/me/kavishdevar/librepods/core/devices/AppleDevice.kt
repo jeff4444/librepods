@@ -190,7 +190,7 @@ class AppleDevice(
 
     // When LibrePods last took the audio down itself (elapsedRealtime), so the service can tell
     // those disconnects from Android's own.
-    @Volatile var audioDisconnectedByUsAt = 0L
+    @Volatile override var audioDisconnectedByUsAt = 0L
         private set
 
     override fun disconnectAudio() {
