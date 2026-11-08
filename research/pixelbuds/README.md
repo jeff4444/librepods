@@ -155,6 +155,12 @@ settings: that page uses another Google channel, not Maestro).
 
 - **Connection:** Pixel Buds Pro 2 connect when a bud leaves the case and disconnect as soon as it's
   back, even with the lid open. So connecting is never "lid open"; it goes straight to the island.
+- **Android's own Disconnect** (measured 2026-11-08): A2DP and HFP go connected -> disconnecting
+  while the link and the Maestro channel are still up, and Android drops the link ~1.4 s later.
+  Putting the buds in the case is the reverse: the buds close Maestro (RFCOMM DISC from their side)
+  and the link drops before the profiles report disconnecting. ACL_DISCONNECTED carries only the
+  transport, no reason. LibrePods holds the buds when the link is up at "disconnecting" and still
+  up 0.3 s later (AirPods keep their 1.5 s check).
 - **Lid:** the buds' Fast Pair beacon (service data 0xFE2C, *extended* advertising on 1M/2M: Android
   only reports it to scans with `setLegacy(false)`) comes every few seconds with the lid closed and
   9-10 a second while it's open, alongside a Find My Device frame (0xFEAA, frame 0x40). Addresses

@@ -1003,14 +1003,24 @@ class LibrePodsService: Service() {
      * audio as DISCONNECTING, after the connection has already gone.
      */
     private fun onAudioDisconnecting(mac: MacAddress, profile: String) {
-        // Pixel Buds too: LibrePods' Maestro channel holds their connection open the same way.
         val device = devices.value[mac] ?: return
         if (device.heldDisconnected || device.connectionState.value != ConnectionState.CONNECTED) return
         if (SystemClock.elapsedRealtime() - device.audioDisconnectedByUsAt < 5_000) return
+        // Pixel Buds differ: after Android's Disconnect, Android drops the whole connection itself
+        // about 1.4 s later (measured 2026-11-08), so the AirPods' 1.5 s wait would miss it. They
+        // tell the two apart sooner: with Android's Disconnect the audio goes down while the
+        // connection and the Maestro channel are both still up; when the buds go into the case,
+        // Maestro has closed and the connection is down before the audio notices. So check the
+        // connection is up now and still up a moment later.
+        val pixelBuds = device is PixelBudsDevice
+        if (pixelBuds && !isAclConnected(device.bluetoothDevice)) {
+            Log.i(TAG, "$profile going down after the connection to ${mac.toRedactedString()}: the buds left, not a user disconnect")
+            return
+        }
         serviceCoroutineScope.launch {
-            delay(1.5.seconds)
+            delay(if (pixelBuds) 0.3.seconds else 1.5.seconds)
             if (device.heldDisconnected) return@launch
-            // Turning Bluetooth off disconnects everything; that isn't a disconnect of these AirPods.
+            // Turning Bluetooth off disconnects everything; that isn't a disconnect of this device.
             if (getSystemService(BluetoothManager::class.java)?.adapter?.state != BluetoothAdapter.STATE_ON) return@launch
             if (device.connectionState.value != ConnectionState.CONNECTED || !isAclConnected(device.bluetoothDevice)) {
                 Log.i(TAG, "$profile went down with the connection to ${mac.toRedactedString()}: the device left, not a user disconnect")
@@ -1095,11 +1105,13 @@ class LibrePodsService: Service() {
                         }
                     }
 
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> onDeviceDisconnected(
-                        MacAddress(
-                            bluetoothDevice.address
-                        )
-                    )
+                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                        // Everything Android says about it (the HCI reason, where it's given), to tell
+                        // a disconnect from Android's settings apart from the buds leaving.
+                        Log.i(TAG, "ACL disconnected for ${bluetoothDevice.address.redactMac()}: " +
+                            intent.extras?.keySet()?.filter { it != BluetoothDevice.EXTRA_DEVICE }?.joinToString { "$it=${intent.extras?.get(it)}" })
+                        onDeviceDisconnected(MacAddress(bluetoothDevice.address))
+                    }
 
                     BluetoothDevice.ACTION_UUID -> onDeviceConnected(bluetoothDevice)
 
@@ -1112,7 +1124,7 @@ class LibrePodsService: Service() {
                         val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
                         val previous = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
                         val mac = MacAddress(bluetoothDevice.address)
-                        Log.i(TAG, "$profile ${profileStateName(previous)} -> ${profileStateName(state)} for ${mac.toRedactedString()}")
+                        Log.i(TAG, "$profile ${profileStateName(previous)} -> ${profileStateName(state)} for ${mac.toRedactedString()} (link ${if (isAclConnected(bluetoothDevice)) "up" else "down"})")
                         val device = devices.value[mac]
                         when {
                             state == BluetoothProfile.STATE_DISCONNECTING -> onAudioDisconnecting(mac, profile)
