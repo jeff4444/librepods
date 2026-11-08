@@ -111,9 +111,10 @@ fun PixelBudsScreen(
     device: PixelBudsDevice,
     navigateBack: (() -> Unit)?
 ) {
-    val state by device.state.collectAsState()
-    val metadata by device.metadata.collectAsState()
-    val connection by device.connectionState.collectAsState()
+    // Plain values, not delegates: the lists below must see a new value to redraw (see Equalizer).
+    val state = device.state.collectAsState().value
+    val metadata = device.metadata.collectAsState().value
+    val connection = device.connectionState.collectAsState().value
     val live = connection == ConnectionState.CONNECTED
 
     var holdPicker by remember { mutableStateOf<Boolean?>(null) }  // true: left bud, false: right
@@ -356,9 +357,12 @@ private fun Equalizer(device: PixelBudsDevice, state: PixelBudsState) {
             local.clear(); local.addAll(bands)
         }
     }
-    val preset = EQ_PRESETS.firstOrNull { (_, values) -> local.size == 5 && values.zip(local).all { (a, b) -> abs(a - b) < 0.05f } }?.first
+    // StyledList collects its rows once; Compose keeps its builder lambda as the same object and
+    // re-runs it in place, so rows added later never show. A changing `key` makes it collect again.
+    val values = local.toList()
+    val preset = EQ_PRESETS.firstOrNull { (_, v) -> values.size == 5 && v.zip(values).all { (a, b) -> abs(a - b) < 0.05f } }?.first
 
-    StyledList(title = "Equalizer", description = if (bands == null) "Not read yet." else null) {
+    StyledList(title = "Equalizer", description = if (bands == null) "Not read yet." else null, key = values.size) {
         item { _, _ ->
             Row(
                 modifier = Modifier
@@ -367,25 +371,25 @@ private fun Equalizer(device: PixelBudsDevice, state: PixelBudsState) {
                     .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                for ((name, values) in EQ_PRESETS) {
+                for ((name, presetValues) in EQ_PRESETS) {
                     FilterChip(
                         selected = preset == name,
                         onClick = {
-                            local.clear(); local.addAll(values)
-                            device.setEq(values)
+                            local.clear(); local.addAll(presetValues)
+                            device.setEq(presetValues)
                         },
                         label = { Text(name) },
                     )
                 }
-                FilterChip(selected = preset == null && local.size == 5, onClick = { }, label = { Text("Custom") })
+                FilterChip(selected = preset == null && values.size == 5, onClick = { }, label = { Text("Custom") })
             }
         }
-        if (local.size == 5) {
+        if (values.size == 5) {
             EQ_BANDS.forEachIndexed { i, name ->
                 item { _, _ ->
                     StyledSlider(
-                        label = "$name  ${"%+.1f".format(local[i])} dB",
-                        value = local[i],
+                        label = "$name  ${"%+.1f".format(values[i])} dB",
+                        value = values[i],
                         onValueChange = { v ->
                             local[i] = (v * 2).roundToInt() / 2f
                             device.setEq(local.toList())
@@ -427,16 +431,22 @@ private fun Balance(device: PixelBudsDevice, state: PixelBudsState) {
 private fun FitTestSection(device: PixelBudsDevice, sku: Int?) {
     val context = LocalContext.current
     val test = remember(device) { PixelBudsFitTest(context.applicationContext, device) }
-    val s by test.state.collectAsState()
+    val s = test.state.collectAsState().value
     DisposableEffect(test) { onDispose { test.finish() } }
 
     StyledList(
         title = "Ear tip seal check",
-        description = "Put both buds in and stay somewhere quiet. Plays a short sound and checks how well each bud seals."
+        description = "Put both buds in and stay somewhere quiet. Plays a short sound and checks how well each bud seals.",
+        key = s,
     ) {
+        val summary = fitSummary(s.left, s.right)
         styledListItem(
             contentText = if (s.running) "Checking…" else if (s.ran) "Check again" else "Check the seal",
-            supportingContent = if (s.running) ({ LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) }) else null,
+            supportingContent = when {
+                s.running -> ({ LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) })
+                s.ran && summary != null -> ({ Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) })
+                else -> null
+            },
             onClick = if (s.running) null else ({ test.start() }),
             orientation = StyledListItemOrientation.Vertical,
         )
@@ -454,6 +464,19 @@ private fun FitTestSection(device: PixelBudsDevice, sku: Int?) {
     }
 }
 
+/** One line for both buds: "Both buds seal well", or which one needs work. */
+private fun fitSummary(left: PixelBudsFitResult?, right: PixelBudsFitResult?): String? {
+    if (left == null && right == null) return "No result: put both buds in and try again"
+    val good = PixelBudsFitResult.Grade.GOOD
+    return when {
+        left?.grade == good && right?.grade == good -> "Both buds seal well"
+        left?.grade == PixelBudsFitResult.Grade.NOISY || right?.grade == PixelBudsFitResult.Grade.NOISY -> "Too noisy to tell, try somewhere quieter"
+        left?.grade != good && right?.grade != good -> "Both buds need adjusting"
+        left?.grade != good -> "The left bud needs adjusting"
+        else -> "The right bud needs adjusting"
+    }
+}
+
 private fun fitText(result: PixelBudsFitResult?, running: Boolean): String {
     if (result == null) return if (running) "Listening…" else "No result"
     val words = when (result.grade) {
@@ -468,12 +491,12 @@ private fun fitText(result: PixelBudsFitResult?, running: Boolean): String {
 
 @Composable
 private fun SoundLevel(device: PixelBudsDevice, state: PixelBudsState) {
-    val level by device.soundLevel.collectAsState()
+    val level = device.soundLevel.collectAsState().value
     DisposableEffect(device) {
         device.watchSoundLevel(true)
         onDispose { device.watchSoundLevel(false) }
     }
-    StyledList(title = "Hearing") {
+    StyledList(title = "Hearing", key = level?.toInt()) {
         styledListItem(
             contentText = "Sound level",
             supportingText = level?.takeIf { it > 0f }?.let { "${it.roundToInt()} dB at your ears" } ?: "Play something to measure",
@@ -492,7 +515,10 @@ private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
         if (on) device.startHeadGestures { value -> last = value to System.currentTimeMillis() }
         onDispose { if (on) device.stopHeadGestures() }
     }
+    val watching = on
+    val lastSeen = last
     StyledList(
+        key = watching to lastSeen,
         title = "Head gestures",
         description = "Nod or shake your head to answer, decline and reply. Watching the buds' raw detections is " +
             "an experiment, logged so the gestures can be named."
@@ -504,11 +530,11 @@ private fun HeadGestures(device: PixelBudsDevice, state: PixelBudsState) {
             checked = enabled == true,
             onCheckedChange = { device.setHeadGestures(it) },
         )
-        styledToggle(label = "Watch raw detections (experimental)", checked = on, onCheckedChange = { on = it })
-        if (on) {
+        styledToggle(label = "Watch raw detections (experimental)", checked = watching, onCheckedChange = { on = it })
+        if (watching) {
             styledListItem(
                 contentText = "Last gesture",
-                supportingText = last?.let { (value, at) -> "Raw value $value, ${(System.currentTimeMillis() - at) / 1000}s ago" } ?: "Nothing yet",
+                supportingText = lastSeen?.let { (value, at) -> "Raw value $value, ${(System.currentTimeMillis() - at) / 1000}s ago" } ?: "Nothing yet",
                 enabled = false,
             )
         }
@@ -537,6 +563,7 @@ private fun UnnamedSettings(state: PixelBudsState) {
     val unnamed = state.settings.filterKeys { it !in PixelBudsSetting.NAMED }.toSortedMap()
     if (unnamed.isEmpty()) return
     StyledList(
+        key = unnamed.keys.toList(),
         title = "Unnamed settings (experimental)",
         description = "Values the buds report that Google's app doesn't name either (it reads none of them by name). " +
             "LibrePods logs any change to them."
