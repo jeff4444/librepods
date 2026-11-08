@@ -1046,6 +1046,9 @@ class LibrePodsService: Service() {
      * and settled, so wait a moment and try a few times. It fails for good while Google's Pixel
      * Buds app is installed and holding the channel.
      */
+    // Pixel Buds reconnected after a bud handover, which shouldn't show the banner again.
+    private val quietReconnects = java.util.Collections.synchronizedSet(mutableSetOf<MacAddress>())
+
     private fun connectPixelBuds(device: PixelBudsDevice) {
         if (device.heldDisconnected) return
         serviceCoroutineScope.launch(Dispatchers.IO) {
@@ -1075,7 +1078,10 @@ class LibrePodsService: Service() {
                 }
                 val connected = device.connectionState.value == ConnectionState.CONNECTED
                 val connection = device.connectionNumber.value
-                if (connected && state.leftInCase != null && state.battery.isNotEmpty() && shownFor != connection) {
+                if (connected && shownFor != connection && quietReconnects.remove(device.macAddress)) {
+                    // Back after a bud handover: the buds never left, so no banner or card.
+                    shownFor = connection
+                } else if (connected && state.leftInCase != null && state.battery.isNotEmpty() && shownFor != connection) {
                     shownFor = connection
                     if (state.bothInCase) {
                         if (cardShows(device)) proximityCardWindow.updateBatteries(state.battery)
@@ -1102,10 +1108,27 @@ class LibrePodsService: Service() {
             }
         }
         serviceCoroutineScope.launch {
+            var previous = device.connectionState.value
             device.connectionState.collect { state ->
                 if (state == ConnectionState.DISCONNECTED && cardShows(device)) proximityCardWindow.close()
+                // Gone for real (into the case): the next connection is a new one, with its banner.
+                if (state == ConnectionState.DISCONNECTED) quietReconnects.remove(device.macAddress)
                 updateDeviceNotification(device)
                 updateLidWatcher()
+                // Maestro closed but the buds are still connected to the phone: likely the bud that
+                // held the link was taken out and the other took over, which keeps Android's audio
+                // but drops LibrePods' channel, and no new connection event comes. Reconnect, after a
+                // moment for the handover to settle. Going into the case drops the link too within a
+                // second, which connectPixelBuds checks before each try.
+                if (previous == ConnectionState.CONNECTED && state == ConnectionState.AVAILABLE && !device.heldDisconnected) {
+                    Log.i(TAG, "Pixel Buds channel closed with the link still up; reconnecting")
+                    quietReconnects.add(device.macAddress)
+                    serviceCoroutineScope.launch {
+                        delay(1500)
+                        if (!device.heldDisconnected) connectPixelBuds(device)
+                    }
+                }
+                previous = state
             }
         }
     }
