@@ -204,7 +204,10 @@ fun ProximityCardContent(
                         state = draggableState,
                         onDragStopped = { velocity ->
                             coroutineScope.launch {
-                                if (offsetY.value > 120f || velocity > 1000f) {
+                                // Only a real swipe down closes it: a fast flick has to have moved
+                                // the card too. Otherwise a system back swipe that starts over
+                                // the card (it sits at the bottom) closed it on speed alone.
+                                if (offsetY.value > 120f || (velocity > 1000f && offsetY.value > 40f)) {
                                     offsetY.animateTo(600f, tween(150))
                                     onClosed()
                                 } else {
