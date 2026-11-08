@@ -9,6 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.util.UUID
@@ -121,6 +123,7 @@ class MaestroClient(private val device: BluetoothDevice) {
             pending.values.forEach { it.cancel() }
             pending.clear()
             streams.clear()
+            streamEnds.clear()
             onClosed()
         }
         Log.i(TAG, "connected")
@@ -133,26 +136,53 @@ class MaestroClient(private val device: BluetoothDevice) {
         reader?.cancel()
     }
 
-    /** A unary call; null on timeout, error status or a closed channel. */
-    suspend fun call(peer: Peer, method: String, payload: ByteArray = ByteArray(0), service: String = MAESTRO): Packet? {
+    /**
+     * A unary call; null on timeout, error status or a closed channel. Calls go one at a time:
+     * replies are matched by (channel, service, method), so two calls of the same method to the
+     * same bud at once would take each other's replies.
+     */
+    suspend fun call(peer: Peer, method: String, payload: ByteArray = ByteArray(0), service: String = MAESTRO): Packet? = calls.withLock {
         val key = Triple(peer.channel, hash(service), hash(method))
         val deferred = CompletableDeferred<Packet>()
         pending[key] = deferred
         if (!send(peer, key, payload)) {
             pending.remove(key)
-            return null
+            return@withLock null
         }
         val packet = withTimeoutOrNull(3_000) { runCatching { deferred.await() }.getOrNull() }
         pending.remove(key)
-        return packet?.takeIf { it.status == 0 }
+        if (packet != null && packet.status != 0) Log.d(TAG, "$service.$method on $peer: status ${packet.status}")
+        packet?.takeIf { it.status == 0 }
     }
 
-    /** Opens a server stream; [onMessage] gets each message's payload until the channel closes. */
-    fun subscribe(peer: Peer, method: String, service: String = MAESTRO, payload: ByteArray = ByteArray(0), onMessage: (ByteArray) -> Unit): Boolean {
+    private val calls = Mutex()
+
+    /**
+     * Opens a server stream; [onMessage] gets each message's payload until the stream ends
+     * ([onEnd] with its status: 0 when the bud completed it) or the channel closes.
+     */
+    fun subscribe(
+        peer: Peer,
+        method: String,
+        service: String = MAESTRO,
+        payload: ByteArray = ByteArray(0),
+        onEnd: ((Int) -> Unit)? = null,
+        onMessage: (ByteArray) -> Unit,
+    ): Boolean {
         val key = Triple(peer.channel, hash(service), hash(method))
         streams[key] = { packet -> onMessage(packet.payload) }
+        if (onEnd != null) streamEnds[key] = onEnd else streamEnds.remove(key)
         return send(peer, key, payload)
     }
+
+    /** Stops listening to a stream (the bud may keep sending; its messages are dropped). */
+    fun unsubscribe(peer: Peer, method: String, service: String = MAESTRO) {
+        val key = Triple(peer.channel, hash(service), hash(method))
+        streams.remove(key)
+        streamEnds.remove(key)
+    }
+
+    private val streamEnds = ConcurrentHashMap<Triple<Int, Int, Int>, (Int) -> Unit>()
 
     private fun send(peer: Peer, key: Triple<Int, Int, Int>, payload: ByteArray): Boolean {
         val out = socket?.outputStream ?: return false
@@ -201,8 +231,12 @@ class MaestroClient(private val device: BluetoothDevice) {
             SERVER_STREAM -> streams[key]?.invoke(packet)
             RESPONSE, SERVER_ERROR -> {
                 val waiting = pending[key]
-                if (waiting != null) waiting.complete(packet)
-                else if (packet.type == SERVER_ERROR) streams.remove(key)
+                if (waiting != null) {
+                    waiting.complete(packet)
+                } else if (streams.remove(key) != null) {
+                    // The end of a server stream: a final response (status 0) or an error.
+                    streamEnds.remove(key)?.invoke(packet.status)
+                }
             }
         }
     }
@@ -319,16 +353,46 @@ object Proto {
         }
     }
 
+    /** Text for logs: `{1: 5, 2: {4: {1: 6}}, 3: 1.5f/0x3fc00000}`; bytes that aren't a message as hex. */
+    fun describe(field: Field): String = when (field.wireType) {
+        0 -> field.varint.toString()
+        5 -> "${java.lang.Float.intBitsToFloat(field.varint.toInt())}f/0x${field.varint.toInt().toUInt().toString(16)}"
+        2 -> field.bytes!!.let { b -> parse(b)?.takeIf { b.isNotEmpty() }?.let(::describe) ?: b.joinToString("") { "%02x".format(it) } }
+        else -> "0x${field.varint.toString(16)}"
+    }
+
+    fun describe(message: Message): String = message.fields.joinToString(", ", "{", "}") { "${it.number}: ${describe(it)}" }
+
     /** A message holding one varint field: how a setting id or bool value is sent. */
-    fun varintField(number: Int, value: Int): ByteArray {
-        val out = ByteArrayOutputStream()
-        out.write(number shl 3)
-        var v = value
-        while (v and 0x7F.inv() != 0) {
-            out.write((v and 0x7F) or 0x80)
-            v = v ushr 7
+    fun varintField(number: Int, value: Int): ByteArray = write { varint(number, value) }
+
+    /** Builds a message; fields are written in the order given. */
+    fun write(build: Writer.() -> Unit): ByteArray = Writer().apply(build).toByteArray()
+
+    class Writer {
+        private val out = ByteArrayOutputStream()
+
+        private fun raw(value: Long) {
+            var v = value
+            while (v and 0x7FL.inv() != 0L) {
+                out.write(((v and 0x7F) or 0x80).toInt())
+                v = v ushr 7
+            }
+            out.write(v.toInt())
         }
-        out.write(v)
-        return out.toByteArray()
+
+        private fun key(number: Int, wireType: Int) = raw(((number shl 3) or wireType).toLong())
+
+        // Negative ints sign-extend to ten bytes, as protobuf's int32 does.
+        fun varint(number: Int, value: Int) = apply { key(number, 0); raw(value.toLong()) }
+        fun bool(number: Int, value: Boolean) = varint(number, if (value) 1 else 0)
+        fun fixed32(number: Int, value: Int) = apply {
+            key(number, 5)
+            for (i in 0 until 4) out.write((value ushr (8 * i)) and 0xFF)
+        }
+        fun float(number: Int, value: Float) = fixed32(number, java.lang.Float.floatToRawIntBits(value))
+        fun bytes(number: Int, value: ByteArray) = apply { key(number, 2); raw(value.size.toLong()); out.write(value) }
+        fun message(number: Int, build: Writer.() -> Unit) = bytes(number, Writer().apply(build).toByteArray())
+        fun toByteArray(): ByteArray = out.toByteArray()
     }
 }
