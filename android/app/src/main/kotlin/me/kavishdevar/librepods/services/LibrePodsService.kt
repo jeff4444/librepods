@@ -113,6 +113,9 @@ private const val DEBUG_HOLD = "me.kavishdevar.librepods.DEBUG_HOLD"
 // connected) and what one sends for a while:
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HEAD_TRACKER --ei seconds 20 -p me.kavishdevar.librepods.dev2
 private const val DEBUG_HEAD_TRACKER = "me.kavishdevar.librepods.DEBUG_HEAD_TRACKER"
+// Pixel Buds: opens their Maestro channel and logs the replies to a few read-only calls:
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_MAESTRO --ei seconds 5 -p me.kavishdevar.librepods.dev2
+private const val DEBUG_MAESTRO = "me.kavishdevar.librepods.DEBUG_MAESTRO"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -415,6 +418,10 @@ class LibrePodsService: Service() {
                 debugHeadTracker(intent.getIntExtra("seconds", 20))
                 return
             }
+            if (intent.action == DEBUG_MAESTRO) {
+                MaestroProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 5))
+                return
+            }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
             when (intent.action) {
                 DEBUG_SHOW_ISLAND -> showIsland(device, IslandType.CONNECTED)
@@ -656,6 +663,7 @@ class LibrePodsService: Service() {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_HOLD)
                 addAction(DEBUG_HEAD_TRACKER)
+                addAction(DEBUG_MAESTRO)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)

@@ -71,10 +71,61 @@ bass presets, spoken notifications, find my device, case sounds, head tracking f
   system's Bluetooth settings page), `companiondevice.MaestroCompanionDeviceService` (a
   CompanionDeviceManager association), `slices.MaestroSliceProvider` (exported).
 
+## What the captures show (2026-11-08, 6a, firmware 6.144)
+
+Decoder: [`maestro_snoop.py`](maestro_snoop.py) (btsnoop → L2CAP → RFCOMM →
+HDLC → pw_rpc → protobuf). Google's app keeps three RFCOMM channels open to the buds:
+
+- **DLCI 3: Maestro.** It addresses each bud's BtCore separately (channel 19 left, 21 right). On
+  connect: GetSoftwareInfo (all three `release_6.144`), GetHardwareInfo (serials for case, right
+  and left; `MPR1` model strings), SubscribeRuntimeInfo (battery per part with charging state, and
+  which buds are in the case), SubscribeToSettingsChanges, SetWallclock (Unix ms),
+  `DynamicServerConfigService.SetConfig {1:1 2:1 3:0}`, JitterBuffer `{1:1}`, Dosimeter summaries,
+  then ReadSetting for ids 13, 1, 3, 2, 4, 5, 11, 7, 16, 15, 17, 18, 12, 21-24, 26-32, 34-39, 19, 25.
+  KPI telemetry streams constantly (218 messages in a few minutes).
+- **DLCI 5: Fast Pair message stream** (battery `group 3 code 3`, `group 8` audio switching, and
+  `group 7 code 64-66` with encrypted-looking payloads).
+- **DLCI 9: another group/code channel with protobuf payloads**, which carries
+  `google-pixel-buds-pro-v1` strings, firmware info (`group 2 code 4`, `group 3 code 2`) and state
+  notifications (`group 4 code 5` went 03 → 05 → 06 during the script; `group 4 codes 18, 20, 22`).
+  Not decoded yet; the noise-mode changes and head gestures in the script didn't show up on
+  Maestro, so they are probably here.
+
+Settings (`WriteSetting`/`ReadSetting` field 4 holds a SettingValue whose field number is the
+setting id), from the script:
+
+| Id | What | Values seen |
+|---|---|---|
+| 7 | Press-and-hold action per bud `{1: left {4:{1:x}}, 2: right {4:{1:x}}}` | 5 (ANC control), 6 (assistant), 7 (new: probably Gemini) |
+| 11 | Multipoint | 0 / 1 |
+| 13 | Noise mode (read) | 0 at first, 4 (Adaptive) later |
+| 14 | OTTS mode, on only while the eartip fit test runs | 1 / 0 |
+| 16 | EQ, five floats | presets wrote (-5, -1.5, 0, 0, 0) and (5, 3, 0, 0, 0) |
+| 22 | Conversation detection (pbpctrl: speech detection) | 1 / 0 |
+| 29 | New; toggled during step 7 or 8 | 1 / 2 |
+| 23, 31 | New; messages `{4:{1:0}}` and `{1:f32 2:f32 3:5}` | read only |
+| 1, 25 | Reading them fails with status 2 | |
+
+Streams: EartipFitTest results are two floats per bud (e.g. 34 and 3; 38 and 5), with the OOBE
+action stream open alongside it reporting 10 and 12 (left and right on head).
+`Dosimeter.SubscribeToLiveDb` sends one float per bud per second.
+
+## LibrePods talking to the buds (2026-11-08)
+
+`adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_MAESTRO --ei seconds 5 -p me.kavishdevar.librepods.dev2`
+(`services/MaestroProbe.kt`) opens the Maestro channel with `createRfcommSocketToServiceRecord`
+and sends read-only calls.
+
+- With Google's app connected: refused ("read failed, socket might closed"). One app at a time.
+- After `am force-stop com.google.android.apps.wearables.maestro.companion`: connected, and both
+  buds answered GetSoftwareInfo, GetHardwareInfo and ReadSetting 13 (= 4, Adaptive). The case
+  (channel 18) didn't answer with the buds out.
+
 ## Open questions
 
-1. Can LibrePods open the Maestro RFCOMM channel while Google's app holds it, or does one have to
-   let go?
+1. ~~Can LibrePods open the Maestro RFCOMM channel while Google's app holds it?~~ No; see above.
+   Options: go through Google's app (question 2), keep Google's app off the channel on phones
+   where LibrePods runs the buds, or take the channel only while Google's app isn't using it.
 2. Does `MaestroEndpointService` accept calls from another app?
 3. ~~Is the head tracker a sensor ordinary apps can read (roadmap #7)?~~ Not directly. While the
    buds are connected, `dumpsys sensorservice` lists "Jeff's Pixel Buds Pro 2", vendor
