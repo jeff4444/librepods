@@ -14,8 +14,8 @@ import androidx.compose.ui.viewinterop.AndroidView
  * video (buds centred at 28% of the width, the open case at 71%, where the card puts their
  * batteries): an animated WebP (transparent, 960 x 540, 120 frames at 30 fps) rendered from Google's
  * own 3D model of the Pro 2 (largo.glb in the Pixel Buds app), the buds posed with its
- * Tilted_Buds_Zoom_In animation and coloured from its per-colour material table, the case's shell
- * in the same colour, under its own lighting map. See research/pixelbuds/turntable.
+ * Tilted_Buds_Zoom_In animation and coloured from its per-colour material table, the case in the
+ * model's own white finish, under its own lighting map. See research/pixelbuds/turntable.
  */
 @Composable
 fun PixelBudsTurntable(@RawRes resId: Int, modifier: Modifier = Modifier, aspectRatio: Float = 960f / 540f) {
