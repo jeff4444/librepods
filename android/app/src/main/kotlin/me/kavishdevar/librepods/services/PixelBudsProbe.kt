@@ -52,7 +52,8 @@ object PixelBudsProbe {
     private const val EXTRA_BATTERY_LEVEL = "android.bluetooth.device.extra.BATTERY_LEVEL"
 
     @SuppressLint("MissingPermission")
-    fun run(context: Context, scope: CoroutineScope, seconds: Int) {
+    /** [unfiltered] scans everything (needs the screen on) instead of using the scan filters. */
+    fun run(context: Context, scope: CoroutineScope, seconds: Int, unfiltered: Boolean = false) {
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return
         val buds = adapter.bondedDevices.firstOrNull { d -> d.uuids?.any { it.uuid == MAESTRO_UUID } == true }
         if (buds != null) {
@@ -73,6 +74,7 @@ object PixelBudsProbe {
 
         val scanner = adapter.bluetoothLeScanner
         val seen = HashMap<String, String>()
+        val lastLogged = HashMap<String, Long>()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) = log(result)
             override fun onBatchScanResults(results: MutableList<ScanResult>) = results.forEach(::log)
@@ -89,9 +91,13 @@ object PixelBudsProbe {
                     if (fastPair != null) append(" fastpair=").append(fastPair.hex())
                     if (google != null) append(" google=").append(google.hex())
                 }
-                // Log changes only, per address, so a steady broadcast doesn't flood the log.
-                if (seen.put(result.device.address, line) != line) {
-                    Log.i(TAG, "advert ${result.device.address} rssi=${result.rssi}$line")
+                // Per address: log changes, and otherwise at most once a second, so the log shows
+                // when a broadcast starts and stops without flooding.
+                val now = android.os.SystemClock.elapsedRealtime()
+                val last = lastLogged[result.device.address] ?: 0L
+                if (seen.put(result.device.address, line) != line || now - last >= 1000) {
+                    lastLogged[result.device.address] = now
+                    Log.i(TAG, "advert ${result.device.address} rssi=${result.rssi}$line raw=${record.bytes.hex().trimEnd('0')}")
                 }
             }
         }
@@ -100,7 +106,7 @@ object PixelBudsProbe {
             ScanFilter.Builder().setManufacturerData(GOOGLE, ByteArray(0)).build(),
         )
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        scanner?.startScan(filters, settings, callback)
+        if (unfiltered) scanner?.startScan(null, settings, callback) else scanner?.startScan(filters, settings, callback)
         Log.i(TAG, "scanning for $seconds s")
         scope.launch {
             delay(seconds.seconds)

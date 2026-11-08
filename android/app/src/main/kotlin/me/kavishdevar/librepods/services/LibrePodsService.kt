@@ -427,7 +427,8 @@ class LibrePodsService: Service() {
                 return
             }
             if (intent.action == DEBUG_PIXELBUDS) {
-                PixelBudsProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 90))
+                PixelBudsProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 90),
+                    unfiltered = intent.getBooleanExtra("all", false))
                 return
             }
             if (intent.action == DEBUG_MAESTRO) {
@@ -830,10 +831,9 @@ class LibrePodsService: Service() {
         }
 
         if (device is PixelBudsDevice) {
-            // Pixel Buds connect when their case opens, so this is the lid opening: show the
-            // card now, with the last battery known; the first report from the buds then keeps it
-            // (both in the case) or swaps it for the island (already taken out).
-            showPixelBudsCard(device)
+            // Pixel Buds Pro 2 connect when a bud leaves the case and disconnect when it's put
+            // back, even with the lid open, so connecting isn't the lid opening: the first report
+            // decides between the island and (rarely, both buds still in the case) the card.
             connectPixelBuds(device)
         } else device.connect()
 
