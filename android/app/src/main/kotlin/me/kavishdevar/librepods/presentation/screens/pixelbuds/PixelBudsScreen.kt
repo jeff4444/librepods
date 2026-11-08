@@ -207,7 +207,7 @@ fun PixelBudsScreen(
                     flagToggle(device, state, PixelBudsSetting.DIAGNOSTICS, "Diagnostics", "Lets the buds collect usage and diagnostics data")
                 }
 
-                UnnamedSettings(state)
+                UnnamedSettings(device, state)
             }
 
             StyledList(title = "About") {
@@ -576,32 +576,44 @@ private fun LottieLoop(@RawRes resId: Int, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun UnnamedSettings(state: PixelBudsState) {
+private fun UnnamedSettings(device: PixelBudsDevice, state: PixelBudsState) {
     val unnamed = state.settings.filterKeys { it !in PixelBudsSetting.NAMED }.toSortedMap()
     if (unnamed.isEmpty()) return
     val switches = unnamed.filterKeys { it in PixelBudsSetting.UNKNOWN_SWITCHES || it in PixelBudsSetting.UNKNOWN_TRISTATE }
     val others = unnamed.filterKeys { it !in switches }
 
-    // Read-only for now: shown as what they are, to be tried one by one.
+    // For experiments: each can be flipped, and put back to what it was before the first change.
+    val originals = device.originals.collectAsState().value
     if (switches.isNotEmpty()) {
+        fun word(value: Int?, tristate: Boolean) = when {
+            value == null -> "unknown"
+            tristate -> when (value) { 0 -> "never set"; 1 -> "off"; 2 -> "on"; else -> "value $value" }
+            else -> if (value != 0) "on" else "off"
+        }
+        val changed = switches.filter { (id, field) -> originals[id]?.let { it != field.varint.toInt() } == true }
         StyledList(
-            key = switches.mapValues { Proto.describe(it.value) },
-            title = "Unknown switches",
-            description = "On/off settings the buds have that Google's app doesn't name. Read-only until we work out what they do."
+            key = Triple(switches.mapValues { Proto.describe(it.value) }, originals, changed.keys),
+            title = "Unknown switches (experimental)",
+            description = "On/off settings the buds have that Google's app doesn't name. Flip one at a time and " +
+                "notice what changes; Put them all back undoes everything."
         ) {
             for ((id, field) in switches) {
                 val value = field.varint.toInt()
                 val tristate = id in PixelBudsSetting.UNKNOWN_TRISTATE
+                val original = originals[id]
                 styledToggle(
                     label = "Setting $id",
-                    description = if (tristate) {
-                        "Three-way, like head gestures: " + when (value) { 0 -> "never set"; 1 -> "off"; 2 -> "on"; else -> "value $value" }
-                    } else {
-                        "On/off; purpose unknown"
-                    },
+                    description = (if (tristate) "Three-way, like head gestures: " else "On/off: ") + word(value, tristate) +
+                        if (original != null && original != value) " (was ${word(original, tristate)})" else "",
                     checked = if (tristate) value == 2 else value != 0,
-                    enabled = false,
-                    onCheckedChange = { },
+                    onCheckedChange = { on -> device.setUnknown(id, if (tristate) (if (on) 2 else 1) else (if (on) 1 else 0)) },
+                )
+            }
+            if (changed.isNotEmpty()) {
+                styledListItem(
+                    contentText = "Put them all back",
+                    supportingText = "Restores ${changed.keys.joinToString { "setting $it" }}",
+                    onClick = { device.restoreUnknown() },
                 )
             }
         }

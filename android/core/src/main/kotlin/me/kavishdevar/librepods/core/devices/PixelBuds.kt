@@ -248,6 +248,13 @@ class PixelBudsDevice(
     private val _connectionNumber = MutableStateFlow(0)
     override val connectionNumber = _connectionNumber.asStateFlow()
 
+    /**
+     * The value each unknown switch had before LibrePods first changed it (saved across
+     * restarts), so experiments with them can be undone.
+     */
+    private val _originals = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    val originals: StateFlow<Map<Int, Int>> = _originals.asStateFlow()
+
     /** Live sound level at the buds in dB, while [watchSoundLevel] is on. */
     private val _soundLevel = MutableStateFlow<Float?>(null)
     val soundLevel: StateFlow<Float?> = _soundLevel.asStateFlow()
@@ -416,8 +423,12 @@ class PixelBudsDevice(
     private val caseKey = "case_battery_${bluetoothDevice.address}"
     private val heldKey = "held_disconnected_${bluetoothDevice.address}"
 
+    private fun originalKey(id: Int) = "original_${bluetoothDevice.address}_$id"
+
     init {
         if (prefs.getBoolean(heldKey, false)) _settings.update { it.copy(stayDisconnected = true) }
+        _originals.value = (PixelBudsSetting.UNKNOWN_SWITCHES + PixelBudsSetting.UNKNOWN_TRISTATE)
+            .mapNotNull { id -> prefs.getInt(originalKey(id), -1).takeIf { it >= 0 }?.let { id to it } }.toMap()
         val saved = prefs.getString(caseKey, null)?.split(",")
         val level = saved?.getOrNull(0)?.toIntOrNull()
         val at = saved?.getOrNull(1)?.toLongOrNull() ?: 0L
@@ -493,6 +504,28 @@ class PixelBudsDevice(
 
     /** For experiments: writes a plain number to any setting id. */
     fun setRaw(id: Int, value: Int) = write(id) { varint(id, value) }
+
+    /** Changes an unknown switch, first noting the value it had so it can be put back. */
+    fun setUnknown(id: Int, value: Int) {
+        if (id !in _originals.value) {
+            val before = _state.value.settings[id]?.takeIf { it.wireType == 0 }?.varint?.toInt()
+            if (before != null) {
+                prefs.edit().putInt(originalKey(id), before).apply()
+                _originals.update { it + (id to before) }
+                Log.i(TAG, "unknown setting $id was $before before the first change")
+            }
+        }
+        Log.i(TAG, "trying unknown setting $id = $value")
+        setRaw(id, value)
+    }
+
+    /** Puts every unknown switch back to what it was before LibrePods changed it. */
+    fun restoreUnknown() {
+        for ((id, value) in _originals.value) {
+            Log.i(TAG, "putting unknown setting $id back to $value")
+            setRaw(id, value)
+        }
+    }
 
     // ---- Ear tip fit test ----------------------------------------------------------------------
 
