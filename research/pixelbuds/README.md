@@ -170,3 +170,51 @@ settings: that page uses another Google channel, not Maestro).
   own white finish.
 - The card used to close on a fast flick alone, so a system back swipe starting over it dismissed
   it; now a flick has to have moved it 40 px.
+
+## Controls in LibrePods (2026-11-08)
+
+`WriteSetting` is `{4: SettingValue}`, where the SettingValue's field number is the setting id. On
+the 6a, firmware 6.144, writes to setting 13 (noise mode: off, transparency, adaptive, ANC) and 16
+(EQ presets) all returned OK and took effect; the EQ was still set after reconnecting.
+
+| id | what | encoding |
+|----|------|----------|
+| 2 | in-ear detection | bool |
+| 4 | touch controls | bool |
+| 7 | press and hold | `{1 left, 2 right}`, each `{4: {1: action}}`; 5 noise control, 6 assistant, 7 seen on these buds (likely Gemini), 1-4 notifications/previous/next/play-pause (not offered by Google) |
+| 11 | multipoint | bool |
+| 12 | modes the hold cycles through | `{1 ANC, 2 off, 3 transparency, 4 adaptive}` bools; read as `{1: 1, 2: 0, 3: 1}` |
+| 13 | noise mode | 1 off, 2 ANC, 3 transparency, 4 adaptive (same numbering as AirPods) |
+| 14 | test ("OTTS") mode | 1 while the fit test runs |
+| 15 | volume EQ | bool |
+| 16 | EQ | `{1 low bass, 2 bass, 3 mid, 4 treble, 5 upper treble}` floats, -6..6 |
+| 17 | balance | 0..200: even = left by n/2, odd = right by n/2+1 (pbpctrl) |
+| 19 | mono | bool |
+| 21 | volume exposure notifications | bool |
+| 22 | conversation detection | bool |
+
+Google's EQ presets (low bass, bass, mid, treble, upper treble), from a tool description in its app:
+Default 0/0/0/0/0, Balanced -3.5/0.5/1/-1/2.5, Clarity -2/0/2/3/5, Heavy bass 5/3/0/0/0,
+Light bass -5/-1.5/0/0/0, Vocal boost -1/0/4/2/0.
+
+Unnamed ids that answer (values on this pair): 3=1, 5=1, 6=0, 18=empty, 23=`{4: {1: 0}}`, 24=0,
+26=0, 27=1, 28=1, 29=2, 30=0, 31=`{1: 0f, 2: 0f, 3: 5}`, 32=1, 33=1, 34=0, 35=empty, 36=1, 37=empty,
+38 and up still to list. LibrePods logs every change (`setting N changed`), so toggling options
+in Android's Pixel Buds settings page should name them.
+
+**Ear tip fit test** (`maestro_pw.EartipFitTest`, per bud on its own channel): write setting 14 = 1,
+wait 800 ms, set media volume to 53% of max (Google's `MaestroOtts__volume_ratio_lr`), play
+`raw/etft_03` (a 13.7 s sound), wait 800 ms, `SubscribeToResults` + `StartTest` (empty messages)
+on each bud. Results are `{1: fit float, 2: noise float}`; afterwards `EndTest` and setting 14 = 0.
+Google grades with flags `fit_test_good_criteria` 80, `fit_test_max_criteria` 200 and
+`noise_test_max_criteria` 40 (255 = no reading) into good / needs adjustment / change ear tip /
+noisy; the decompiled grading is garbled, so which way "fit" goes is still to confirm.
+
+**Dosimeter:** `SubscribeToLiveDb` streams `{2: intensity}` (dB = 10·log10). `FetchDailySummaries`
+returned `{1: 36493, 2: {1: day, 6: float}...}`; the day numbers (18240...) and floats are not
+decoded yet.
+
+**Other streams:** `SubscribeToOobeActions` reports on/off-head events (10 left on, 11 left off,
+12 right on, 13 right off) outside setup too; taps were not seen yet. `Multipoint.SubscribeToQuietModeStatus`
+sent `{1: 0}`. `HeadGesture.StartDetection` + `SubscribeToResults` (empty messages) should stream
+`{1: gesture}`; not tried with nods yet.
