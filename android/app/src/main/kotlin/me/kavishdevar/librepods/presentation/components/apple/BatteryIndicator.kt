@@ -76,7 +76,9 @@ fun BatteryIndicator(
     battery: Battery,
     showLabel: Boolean = true,
     surfaceColor: Color = Color.Unspecified,
-    showIcon: Boolean = true
+    showIcon: Boolean = true,
+    // The case's symbol for devices other than AirPods (Pixel Buds).
+    @androidx.annotation.DrawableRes caseIconRes: Int? = null,
 ) {
     val design = LocalDesign.current
     val isDarkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
@@ -231,12 +233,28 @@ fun BatteryIndicator(
                     richText("${battery.level}%")
                 }
 
-                Text(
-                    text = richText.text,
-                    inlineContent = richText.inlineContent,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = color,
-                )
+                if (showIcon && battery.component == BatteryComponent.CASE && caseIconRes != null) {
+                    Icon(
+                        painter = androidx.compose.ui.res.painterResource(caseIconRes),
+                        contentDescription = null,
+                        tint = color,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .align(Alignment.CenterVertically)
+                    )
+                    Text(
+                        text = " ${battery.level}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = color,
+                    )
+                } else {
+                    Text(
+                        text = richText.text,
+                        inlineContent = richText.inlineContent,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = color,
+                    )
+                }
             }
         }
     }

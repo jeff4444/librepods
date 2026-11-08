@@ -69,9 +69,10 @@ fun BatteryView(
     // With a picture of each bud, the header always shows left, right and case side by side.
     @DrawableRes leftImageRes: Int? = null,
     @DrawableRes rightImageRes: Int? = null,
+    @DrawableRes caseIconRes: Int? = null,
 ) {
     if (leftImageRes != null && rightImageRes != null && batteryList.none { it.component == BatteryComponent.HEADSET }) {
-        SeparateParts(batteryList, leftImageRes, rightImageRes, caseImageRes, surfaceColor)
+        SeparateParts(batteryList, leftImageRes, rightImageRes, caseImageRes, surfaceColor, caseIconRes)
         return
     }
     Row(
@@ -215,6 +216,7 @@ private fun SeparateParts(
     @DrawableRes rightImageRes: Int,
     @DrawableRes caseImageRes: Int?,
     surfaceColor: Color,
+    @DrawableRes caseIconRes: Int?,
 ) {
     val parts = listOfNotNull(
         Triple(BatteryComponent.LEFT, leftImageRes, R.string.left),
@@ -249,7 +251,7 @@ private fun SeparateParts(
                     )
                 }
                 if (battery != null) {
-                    BatteryIndicator(battery = battery, surfaceColor = surfaceColor)
+                    BatteryIndicator(battery = battery, surfaceColor = surfaceColor, caseIconRes = caseIconRes)
                 } else {
                     // Not reported (a Pixel Buds case while the buds are out, say).
                     Text(

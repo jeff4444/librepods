@@ -138,6 +138,7 @@ fun PixelBudsScreen(
                     caseImageRes = PixelBudsArt.case(metadata),
                     leftImageRes = PixelBudsArt.leftBud(metadata),
                     rightImageRes = PixelBudsArt.rightBud(metadata),
+                    caseIconRes = PixelBudsArt.caseIcon,
                 )
             }
 
