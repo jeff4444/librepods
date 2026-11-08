@@ -70,6 +70,8 @@ class ProximityCardWindow(
         // A Lottie animation in place of the video, for light and dark cards.
         val lottieLightRes: Int = 0,
         val lottieDarkRes: Int = 0,
+        // An animation drawn in Compose, ahead of both.
+        val animation: (@androidx.compose.runtime.Composable (androidx.compose.ui.Modifier) -> Unit)? = null,
     )
     private var onConnect: () -> Unit = {}
     private var airPodsConnected by mutableStateOf(false)
@@ -277,6 +279,7 @@ class ProximityCardWindow(
                         videoResId = images?.videoResId ?: spec.videoResId,
                         lottieLightRes = images?.lottieLightRes ?: 0,
                         lottieDarkRes = images?.lottieDarkRes ?: 0,
+                        animation = images?.animation,
 
                         cardState = cardState,
                         onConnect = onConnect,

@@ -101,6 +101,7 @@ fun ProximityCardContent(
     @RawRes videoResId: Int = coreR.raw.airpods_pro_2_prox_loop,
     @RawRes lottieLightRes: Int = 0,
     @RawRes lottieDarkRes: Int = 0,
+    animation: (@Composable (Modifier) -> Unit)? = null,
 
     cardState: ProximityCardState,
     onConnect: () -> Unit,
@@ -289,10 +290,11 @@ fun ProximityCardContent(
                         },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (settings.useVideo && (videoResId != 0 || lottieLightRes != 0)) {
+                        if (settings.useVideo && (videoResId != 0 || lottieLightRes != 0 || animation != null)) {
                             VideoBatteryLayout(
                                 batteryList = batteries,
                                 videoResId = videoResId,
+                                animation = animation,
                                 lottieResId = if (darkTheme && lottieDarkRes != 0) lottieDarkRes else lottieLightRes,
                                 surfaceColor = backgroundColor,
                                 fitContent = autoHeight
@@ -334,6 +336,7 @@ private fun VideoBatteryLayout(
     batteryList: Set<Battery>,
     @RawRes videoResId: Int,
     @RawRes lottieResId: Int = 0,
+    animation: (@Composable (Modifier) -> Unit)? = null,
     surfaceColor: Color,
     // Size to the video across the full width, with each battery centered under its object.
     fitContent: Boolean = false
@@ -362,7 +365,9 @@ private fun VideoBatteryLayout(
             },
             contentAlignment = Alignment.Center
         ) {
-            if (lottieResId != 0) {
+            if (animation != null) {
+                animation(Modifier.fillMaxWidth())
+            } else if (lottieResId != 0) {
                 LottieLoop(resId = lottieResId, modifier = Modifier.fillMaxWidth())
             } else {
                 LoopingVideoView(

@@ -953,12 +953,25 @@ class LibrePodsService: Service() {
             batteries = device.state.value.battery,
             onConnect = { serviceCoroutineScope.launch(Dispatchers.IO) { device.connectByUser() } },
             airPodsConnected = true,
-            images = ProximityCardWindow.CardImages(
-                primaryImageRes = PixelBudsArt.buds(device.metadata.value),
-                caseImageRes = PixelBudsArt.case,
-                lottieLightRes = PixelBudsArt.takeOutLight,
-                lottieDarkRes = PixelBudsArt.takeOutDark,
-            ),
+            images = if (device.metadata.value.deviceType == 6 || device.metadata.value.deviceType == null) {
+                // Pro 2 (or not read yet: the only Pixel Buds here): a turntable of the Pro 2 model.
+                val bud = PixelBudsArt.buds(device.metadata.value)
+                ProximityCardWindow.CardImages(
+                    primaryImageRes = bud,
+                    caseImageRes = PixelBudsArt.case,
+                    animation = { modifier ->
+                        me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsTurntable(PixelBudsArt.pro2Turntable, modifier)
+                    },
+                )
+            } else {
+                // Other Pixel Buds: Google's own animation, which draws their shape.
+                ProximityCardWindow.CardImages(
+                    primaryImageRes = PixelBudsArt.buds(device.metadata.value),
+                    caseImageRes = PixelBudsArt.case,
+                    lottieLightRes = PixelBudsArt.takeOutLight,
+                    lottieDarkRes = PixelBudsArt.takeOutDark,
+                )
+            },
         )
     }
 

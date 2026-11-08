@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pro 2 turntable</title>
+<style>
+  html, body { margin: 0; background: #2b2b2e; color: #ddd; font: 13px monospace; }
+  canvas { display: block; background: transparent; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="status">loading…</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
+
+const params = new URLSearchParams(location.search);
+const FRAMES = Number(params.get("frames") || 1);
+const W = Number(params.get("w") || 720), H = Math.round(W * 230 / 312);
+// Hazel (colour code 10), from Google's largoBudMaterialMap.
+const HAZEL = { cap: 0x565D5A, capEnv: 0.7, topCap: 0x565D5A, topCapEmissive: 0x646464, topCapEmissiveIntensity: 0.6 };
+const TILT = Number(params.get("tilt") || 18) * Math.PI / 180;
+
+const status = document.getElementById("status");
+const log = (m) => { status.textContent = m; fetch("/log", { method: "POST", body: m }); };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+const hdr = await new RGBELoader().loadAsync("hdr_map_largo.hdr");
+scene.environment = pmrem.fromEquirectangular(hdr).texture;
+const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(2, 3, 4); scene.add(key);
+
+const gltf = await new GLTFLoader().loadAsync("largo.glb");
+const model = gltf.scene;
+// Pose the buds with one of Google's animations (?anim=name&at=0..1), as its viewer does.
+const animName = params.get("anim");
+if (animName) {
+  const clip = gltf.animations.find((a) => a.name === animName);
+  if (clip) {
+    const mixer = new THREE.AnimationMixer(model);
+    const action = mixer.clipAction(clip); action.play();
+    mixer.setTime(clip.duration * Number(params.get("at") || 1) - 0.0001);
+  } else {
+    log("no animation " + animName + "; have " + gltf.animations.map(a => a.name).join(", "));
+  }
+}
+
+// Keep the two buds (medium ear tips only); hide the case, phone, ear and the other tips.
+const keep = (path) =>
+  /(buds_left|right_buds|buds_right|bud_right)/.test(path) &&
+  !/(eartip(extrasmall|large|small)|letter|earfit|bezel)/.test(path);
+const shown = [];
+model.traverse((o) => {
+  if (!o.isMesh) return;
+  let path = "", p = o;
+  while (p) { path = (p.name || "").toLowerCase() + "/" + path; p = p.parent; }
+  // Hide unwanted parts by their material, not their node: the left bud hangs under the case's
+  // mesh, so hiding that node would hide the bud too.
+  o.userData.kept = keep(path);
+  if (!o.userData.kept) {
+    o.material = new THREE.MeshBasicMaterial({ visible: false });
+    return;
+  }
+  shown.push(o.name);
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  const fresh = mats.map((m) => {
+    const c = m.clone();
+    const name = path;
+    if (/buds_cap_[lr]/.test(name)) { c.color.setHex(HAZEL.cap); c.map = null; c.envMapIntensity = HAZEL.capEnv; }
+    if (/mesh_top_cap_[lr]/.test(name)) {
+      c.color.setHex(HAZEL.topCap); c.map = null;
+      if (c.emissive) { c.emissive.setHex(HAZEL.topCapEmissive); c.emissiveIntensity = HAZEL.topCapEmissiveIntensity; }
+    }
+    if (params.get("debug")) {
+      const n = o.name.toLowerCase();
+      c.map = null; c.emissive && c.emissive.setHex(0x000000);
+      c.color.setHex(/_l(_\d)?$|polysurface7/.test(n) ? 0xff3030 : /_r(_\d)?$|polysurface3/.test(n) ? 0x3060ff : 0x30ff30);
+    }
+    c.needsUpdate = true;
+    return c;
+  });
+  o.material = Array.isArray(o.material) ? fresh : fresh[0];
+});
+
+// Centre the pair on the origin inside a turntable group.
+const box = new THREE.Box3();
+model.updateMatrixWorld(true);
+model.traverse((o) => { if (o.isMesh && o.userData.kept) box.expandByObject(o); });
+const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+// Where each bud sits, to aim the camera across the pair.
+const side = (re) => { const b = new THREE.Box3(); model.traverse((o) => { if (o.isMesh && o.userData.kept && re.test(o.name.toLowerCase())) b.expandByObject(o); }); return b.getCenter(new THREE.Vector3()); };
+const leftC = side(/_l(_\d)?$|polysurface7/), rightC = side(/_r(_\d)?$|polysurface3/);
+const cams = gltf.cameras.map((c) => { c.updateMatrixWorld(true); return c.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(3)).join(","); });
+log(`left ${leftC.toArray().map(v=>v.toFixed(4))} right ${rightC.toArray().map(v=>v.toFixed(4))} cams ${cams.join(" | ")}`);
+model.position.sub(centre);
+const turn = new THREE.Group(); turn.add(model);
+const tilt = new THREE.Group(); tilt.add(turn); tilt.rotation.x = TILT;
+scene.add(tilt);
+
+const radius = size.length() / 2;
+const camera = new THREE.PerspectiveCamera(28, W / H, radius / 50, radius * 50);
+const dist = radius / Math.sin((28 * Math.PI / 180) / 2) * Number(params.get("zoom") || 1.05);
+camera.position.set(0, 0, dist);
+camera.lookAt(0, 0, 0);
+
+{
+  const rows = [];
+  model.traverse((o) => {
+    if (!o.isMesh || !o.userData.kept) return;
+    const n = o.name.toLowerCase();
+    if (!/_l(_\d)?$|polysurface7/.test(n)) return;
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    let chain = true, p = o; while (p) { chain = chain && p.visible; p = p.parent; }
+    const ws = o.getWorldScale(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(",");
+    rows.push(`${o.name.replace("Largo_animLargo_model","")}: op=${m.opacity} transp=${m.transparent} side=${m.side} chainVisible=${chain} ws=${ws} verts=${o.geometry.attributes.position.count} skinned=${!!o.isSkinnedMesh} morph=${!!o.morphTargetInfluences}`);
+  });
+  log("LEFT: " + rows.join(" || "));
+}
+log(`shown ${shown.length} meshes: ${shown.join(", ")} | size ${size.toArray().map(v => v.toFixed(3))}`);
+
+for (let i = 0; i < FRAMES; i++) {
+  turn.rotation.y = (i / FRAMES) * Math.PI * 2;
+  renderer.render(scene, camera);
+  const blob = await new Promise((r) => renderer.domElement.toBlob(r, "image/png"));
+  await fetch(`/frame/${FRAMES === 1 ? "test_" + (params.get("tag") || animName || "rest") : String(i).padStart(3, "0")}`, { method: "POST", body: blob });
+  status.textContent = `frame ${i + 1}/${FRAMES}`;
+}
+log(`done ${FRAMES} frames`);
+</script>
+</body>
+</html>
