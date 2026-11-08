@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pro 2 stills</title>
+<style>
+  html, body { margin: 0; background: #2b2b2e; color: #ddd; font: 13px monospace; }
+  canvas { display: block; background: transparent; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="status">loading…</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
+
+// Still images of one part for the app's battery header: ?part=case|left|right|buds, &yaw=deg,
+// &tilt=deg, &roll=deg, &w=px. The picture is cropped to the part (transparent around it) and
+// POSTed to frames/<tag>.png.
+const params = new URLSearchParams(location.search);
+const PART = params.get("part") || "case";
+const W = Number(params.get("w") || 1024), H = W;
+const deg = (n, d) => Number(params.get(n) ?? d) * Math.PI / 180;
+// Hazel (colour code 10), from Google's largoBudMaterialMap.
+const HAZEL = { cap: 0x565D5A, capEnv: 0.7, topCap: 0x565D5A, topCapEmissive: 0x646464, topCapEmissiveIntensity: 0.6 };
+
+const status = document.getElementById("status");
+const log = (m) => { status.textContent = m; fetch("/log", { method: "POST", body: m }); };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromEquirectangular(await new RGBELoader().loadAsync("hdr_map_largo.hdr")).texture;
+const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(2, 3, 4); scene.add(key);
+
+const gltf = await new GLTFLoader().loadAsync("largo.glb");
+const model = gltf.scene;
+if (PART !== "case") {
+  const clip = gltf.animations.find((a) => a.name === (params.get("anim") || "Tilted_Buds_Zoom_In"));
+  if (clip) { const mixer = new THREE.AnimationMixer(model); mixer.clipAction(clip).play(); mixer.setTime(clip.duration - 0.0001); }
+}
+const LEFT = /buds_left/, RIGHT = /(right_buds|buds_right|bud_right)/;
+const keep = (path, name) => {
+  if (PART === "case") return /(case_bottom|case_top|inside_lid|outside_lid|attach_led)/.test(path) && !/(buds_left|right_buds|buds_right|bud_right|eartip|letter|earfit|bezel)/.test(path);
+  const bud = (LEFT.test(path) || RIGHT.test(path)) && !/(eartip(extrasmall|large|small)|letter|earfit|bezel)/.test(path);
+  if (!bud) return false;
+  if (PART === "left") return /_l(_\d)?$|polysurface7/.test(name) || (LEFT.test(path) && !RIGHT.test(path) && !/_r(_\d)?$|polysurface3/.test(name));
+  if (PART === "right") return /_r(_\d)?$|polysurface3/.test(name) || (RIGHT.test(path) && !LEFT.test(path) && !/_l(_\d)?$|polysurface7/.test(name));
+  return true;
+};
+model.traverse((o) => {
+  if (!o.isMesh) return;
+  let path = "", p = o;
+  while (p) { path = (p.name || "").toLowerCase() + "/" + path; p = p.parent; }
+  o.userData.kept = keep(path, o.name.toLowerCase());
+  // Hide by material, not node: the left bud hangs under the case's mesh.
+  if (!o.userData.kept) { o.material = new THREE.MeshBasicMaterial({ visible: false }); return; }
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  const fresh = mats.map((m) => {
+    const c = m.clone();
+    if (/buds_cap_[lr]/.test(path)) { c.color.setHex(HAZEL.cap); c.map = null; c.envMapIntensity = HAZEL.capEnv; }
+    if (/mesh_top_cap_[lr]/.test(path)) {
+      c.color.setHex(HAZEL.topCap); c.map = null;
+      if (c.emissive) { c.emissive.setHex(HAZEL.topCapEmissive); c.emissiveIntensity = HAZEL.topCapEmissiveIntensity; }
+    }
+    if (params.get("debug")) { c.map = null; c.color.setHex(0xff3030); }
+    c.needsUpdate = true;
+    return c;
+  });
+  o.material = Array.isArray(o.material) ? fresh : fresh[0];
+});
+model.updateMatrixWorld(true);
+// Drop stray pieces of a single bud: keep only meshes near the biggest one (a sliver of the other
+// bud matched).
+if (PART === "left" || PART === "right") {
+  const kept = []; model.traverse((o) => { if (o.isMesh && o.userData.kept) kept.push(o); });
+  const boxOf = (o) => new THREE.Box3().setFromObject(o);
+  const vol = (b) => { const s = b.getSize(new THREE.Vector3()); return s.x * s.y * s.z; };
+  const main = kept.map(boxOf).reduce((a, b) => (vol(b) > vol(a) ? b : a));
+  const zone = main.clone().expandByVector(main.getSize(new THREE.Vector3()).multiplyScalar(0.6));
+  for (const o of kept) {
+    if (!zone.containsPoint(boxOf(o).getCenter(new THREE.Vector3()))) {
+      o.userData.kept = false; o.material = new THREE.MeshBasicMaterial({ visible: false });
+      log(`dropped stray ${o.name}`);
+    }
+  }
+}
+const box = new THREE.Box3();
+model.traverse((o) => { if (o.isMesh && o.userData.kept) box.expandByObject(o); });
+model.position.sub(box.getCenter(new THREE.Vector3()));
+const turn = new THREE.Group(); turn.add(model); turn.rotation.y = deg("yaw", 0);
+const tilt = new THREE.Group(); tilt.add(turn); tilt.rotation.x = deg("tilt", 10); tilt.rotation.z = deg("roll", 0);
+scene.add(tilt);
+
+const r = box.getSize(new THREE.Vector3()).length() / 2;
+const camera = new THREE.OrthographicCamera(-r, r, r, -r, 0.001, 10);
+camera.position.set(0, 0, 2); camera.lookAt(0, 0, 0);
+renderer.render(scene, camera);
+
+// Crop to the visible pixels, with a small margin.
+const src = document.createElement("canvas"); src.width = W; src.height = H;
+const ctx = src.getContext("2d"); ctx.drawImage(renderer.domElement, 0, 0);
+const data = ctx.getImageData(0, 0, W, H).data;
+let x0 = W, y0 = H, x1 = 0, y1 = 0;
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+  if (data[(y * W + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+}
+const m = Math.round(W * 0.01);
+x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(W - 1, x1 + m); y1 = Math.min(H - 1, y1 + m);
+const out = document.createElement("canvas"); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+out.getContext("2d").drawImage(src, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+const blob = await new Promise((res) => out.toBlob(res, "image/png"));
+await fetch(`/frame/${params.get("tag") || PART}`, { method: "POST", body: blob });
+log(`done ${PART} ${out.width}x${out.height}`);
+</script>
+</body>
+</html>

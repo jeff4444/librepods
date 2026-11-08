@@ -17,7 +17,22 @@ object PixelBudsArt {
         else -> R.drawable.img_pixel_buds_pro_2_dark_haze // 10, and Google's own default
     }
 
-    val case: Int = R.drawable.img_pixel_buds_case
+    /** Google's case symbol, for Pixel Buds without a render of their own. */
+    val caseOutline: Int = R.drawable.img_pixel_buds_case
+
+    private fun isPro2(metadata: PixelBudsMetadata) = metadata.deviceType == 6 || metadata.deviceType == null
+
+    /** The case as the card shows it: the Pro 2 model in its own white finish. */
+    fun case(metadata: PixelBudsMetadata): Int =
+        if (isPro2(metadata)) R.drawable.img_pixel_buds_pro_2_case_white else caseOutline
+
+    // Each bud on its own, rendered from Google's Pro 2 model (research/pixelbuds/turntable,
+    // stills.html); only Hazel so far, other colours fall back to the pair.
+    fun leftBud(metadata: PixelBudsMetadata): Int? =
+        if (isPro2(metadata) && (metadata.sku == null || metadata.sku == 10)) R.drawable.img_pixel_buds_pro_2_left_dark_haze else null
+
+    fun rightBud(metadata: PixelBudsMetadata): Int? =
+        if (isPro2(metadata) && (metadata.sku == null || metadata.sku == 10)) R.drawable.img_pixel_buds_pro_2_right_dark_haze else null
     val icon: Int = R.drawable.ic_pixel_buds
     val caseIcon: Int = R.drawable.ic_pixel_buds_case
     val leftIcon: Int = R.drawable.ic_pixel_buds_left

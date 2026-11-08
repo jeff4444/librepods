@@ -350,6 +350,22 @@ class PixelBudsDevice(
 
     // ---- Writing settings ----------------------------------------------------------------------
 
+    // The case only reports its level while a bud is in it, so the last one is kept (across
+    // restarts too) and shown as last known while both buds are out.
+    private val prefs = context.getSharedPreferences("pixel_buds", Context.MODE_PRIVATE)
+    private val caseKey = "case_battery_${bluetoothDevice.address}"
+
+    init {
+        val saved = prefs.getString(caseKey, null)?.split(",")
+        val level = saved?.getOrNull(0)?.toIntOrNull()
+        val at = saved?.getOrNull(1)?.toLongOrNull() ?: 0L
+        if (level != null) {
+            _state.update {
+                it.copy(battery = it.battery + Battery(BatteryComponent.CASE, level, BatteryStatus.DISCONNECTED, BatterySource.MAESTRO, at))
+            }
+        }
+    }
+
     /** Latest unsent value per setting id; a slider drag only sends where it ended up. */
     private val outbox = LinkedHashMap<Int, ByteArray>()
     private val outboxSignal = Channel<Unit>(Channel.CONFLATED)
@@ -530,6 +546,9 @@ class PixelBudsDevice(
             battery(BatteryComponent.LEFT, 2),
             battery(BatteryComponent.RIGHT, 3),
         ).toSet()
+        set.find { it.component == BatteryComponent.CASE }?.let { case ->
+            prefs.edit().putString(caseKey, "${case.level},${case.timestamp}").apply()
+        }
         // Placement: 1 right bud in case, 2 left bud in case (false values are left out).
         val placement = info.message(7)
         Log.i(TAG, "runtime: ${set.joinToString { "${it.component} ${it.level}% ${it.status}" }}, in case: right ${placement?.bool(1)}, left ${placement?.bool(2)}")

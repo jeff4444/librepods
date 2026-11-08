@@ -84,6 +84,40 @@ object MaestroProbe {
                 return@launch
             }
             Log.i(TAG, "connected")
+            if (uuid != MAESTRO_UUID) {
+                // Another channel (Google's Fast Pair message stream, say): send nothing, log what comes.
+                // Fast Pair messages are [group][code][length: 2 bytes, big-endian][data].
+                // A blocked Bluetooth read only returns when the socket closes.
+                val closer = launch { delay(seconds.seconds); runCatching { socket.close() } }
+                try {
+                    val input = socket.inputStream
+                    val buf = ByteArray(1024)
+                    val pending = ByteArrayOutputStream()
+                    run {
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            Log.i(TAG, "raw ${buf.copyOf(n).hex()}")
+                            pending.write(buf, 0, n)
+                            var bytes = pending.toByteArray()
+                            while (bytes.size >= 4) {
+                                val length = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
+                                if (bytes.size < 4 + length) break
+                                Log.i(TAG, "message group ${bytes[0].toInt() and 0xFF} code ${bytes[1].toInt() and 0xFF}: ${bytes.copyOfRange(4, 4 + length).hex()}")
+                                bytes = bytes.copyOfRange(4 + length, bytes.size)
+                            }
+                            pending.reset(); pending.write(bytes)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.i(TAG, "reader stopped: ${e.message}")
+                } finally {
+                    closer.cancel()
+                    runCatching { socket.close() }
+                    Log.i(TAG, "closed")
+                }
+                return@launch
+            }
             val reader = launch(Dispatchers.IO) {
                 val input = socket.inputStream
                 val frame = ByteArrayOutputStream()

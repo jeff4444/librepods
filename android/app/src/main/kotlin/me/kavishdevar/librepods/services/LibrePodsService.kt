@@ -969,7 +969,7 @@ class LibrePodsService: Service() {
                 val bud = PixelBudsArt.buds(device.metadata.value)
                 ProximityCardWindow.CardImages(
                     primaryImageRes = bud,
-                    caseImageRes = PixelBudsArt.case,
+                    caseImageRes = PixelBudsArt.case(device.metadata.value),
                     animation = { modifier ->
                         me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsTurntable(PixelBudsArt.pro2Turntable, modifier)
                     },
@@ -978,7 +978,7 @@ class LibrePodsService: Service() {
                 // Other Pixel Buds: Google's own animation, which draws their shape.
                 ProximityCardWindow.CardImages(
                     primaryImageRes = PixelBudsArt.buds(device.metadata.value),
-                    caseImageRes = PixelBudsArt.case,
+                    caseImageRes = PixelBudsArt.case(device.metadata.value),
                     lottieLightRes = PixelBudsArt.takeOutLight,
                     lottieDarkRes = PixelBudsArt.takeOutDark,
                 )

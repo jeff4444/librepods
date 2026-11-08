@@ -24,3 +24,8 @@ batteries. 960 x 540, 120 frames, 648 KB as WebP.
 Other colours: change `HAZEL` in `index.html` to the colour code's entry from Google's table.
 `?frames=1&tag=x` renders one test frame; `?debug=1` colours the left bud red and the right blue.
 Hide parts by material, not node: the left bud hangs under the case's mesh.
+
+Stills for the page's battery header (`res/drawable-nodpi/img_pixel_buds_pro_2_{left,right}_dark_haze.webp`
+and `img_pixel_buds_pro_2_case_white.webp`): `stills.html?part=left|right|case&tilt=10&tag=name` renders
+one part on a transparent background, cropped to it, to `frames/<tag>.png`; then `sips -Z 480` and
+`cwebp -q 88 -alpha_q 100 -m 6` (not img2webp, which wraps a still in an animation).

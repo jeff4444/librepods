@@ -24,7 +24,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -64,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
@@ -73,7 +71,6 @@ import com.airbnb.lottie.compose.rememberLottieComposition
 import kotlinx.coroutines.delay
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.core.bluetooth.maestro.Proto
-import me.kavishdevar.librepods.core.devices.BatteryStatus
 import me.kavishdevar.librepods.core.devices.ConnectionState
 import me.kavishdevar.librepods.core.devices.PixelBudsDevice
 import me.kavishdevar.librepods.core.devices.PixelBudsFitResult
@@ -83,8 +80,8 @@ import me.kavishdevar.librepods.core.devices.PixelBudsSetting
 import me.kavishdevar.librepods.core.devices.PixelBudsState
 import me.kavishdevar.librepods.data.app.DesignSystem
 import me.kavishdevar.librepods.presentation.design.LocalDesign
-import me.kavishdevar.librepods.presentation.components.apple.BatteryView
 import me.kavishdevar.librepods.presentation.components.apple.NoiseControlSettings
+import me.kavishdevar.librepods.presentation.components.apple.BatteryView
 import me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsArt
 import me.kavishdevar.librepods.presentation.components.primitives.StyledList
 import me.kavishdevar.librepods.presentation.components.primitives.StyledListScope
@@ -135,19 +132,13 @@ fun PixelBudsScreen(
             Spacer(modifier = Modifier.height(topPadding))
 
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (state.battery.any { it.status != BatteryStatus.DISCONNECTED }) {
-                    BatteryView(
-                        batteryList = state.battery,
-                        primaryImageRes = PixelBudsArt.buds(metadata),
-                        caseImageRes = PixelBudsArt.case,
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(PixelBudsArt.buds(metadata)),
-                        contentDescription = metadata.modelName,
-                        modifier = Modifier.size(160.dp)
-                    )
-                }
+                BatteryView(
+                    batteryList = state.battery,
+                    primaryImageRes = PixelBudsArt.buds(metadata),
+                    caseImageRes = PixelBudsArt.case(metadata),
+                    leftImageRes = PixelBudsArt.leftBud(metadata),
+                    rightImageRes = PixelBudsArt.rightBud(metadata),
+                )
             }
 
             if (!live) {

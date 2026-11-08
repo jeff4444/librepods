@@ -64,6 +64,9 @@ data class AirPodsSpec(
     val genericIconName: String = "AirPodsPro3",
     @DrawableRes val primaryImageRes: Int = R.drawable.img_airpods_pro_2_buds,
     @DrawableRes val caseImageRes: Int? = R.drawable.img_airpods_pro_2_case,
+    // Each pod on its own, for the page's left / right / case battery header.
+    @DrawableRes val leftImageRes: Int? = null,
+    @DrawableRes val rightImageRes: Int? = null,
     @RawRes val videoResId: Int = R.raw.airpods_pro_2_prox_loop,
     val baseCapabilities: Set<BaseCapability>,
 )
@@ -94,6 +97,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods",
             primaryImageRes = R.drawable.img_airpods_1_buds,
             caseImageRes = R.drawable.img_airpods_1_case,
+            leftImageRes = R.drawable.img_airpods_1_left,
+            rightImageRes = R.drawable.img_airpods_1_right,
             baseCapabilities = emptySet()
         ),
         AirPodsModel.AIRPODS_2 to AirPodsSpec(
@@ -120,6 +125,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods",
             primaryImageRes = R.drawable.img_airpods_2_buds,
             caseImageRes = R.drawable.img_airpods_2_case,
+            leftImageRes = R.drawable.img_airpods_2_left,
+            rightImageRes = R.drawable.img_airpods_2_right,
             baseCapabilities = emptySet()
         ),
         AirPodsModel.AIRPODS_3 to AirPodsSpec(
@@ -146,6 +153,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods3",
             primaryImageRes = R.drawable.img_airpods_3_buds,
             caseImageRes = R.drawable.img_airpods_3_case,
+            leftImageRes = R.drawable.img_airpods_3_left,
+            rightImageRes = R.drawable.img_airpods_3_right,
             baseCapabilities = setOf(
                 BaseCapability.HEAD_GESTURES
             )
@@ -174,6 +183,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods4",
             primaryImageRes = R.drawable.img_airpods_4_buds,
             caseImageRes = R.drawable.img_airpods_4_case,
+            leftImageRes = R.drawable.img_airpods_4_left,
+            rightImageRes = R.drawable.img_airpods_4_right,
             baseCapabilities = setOf(
                 BaseCapability.HEAD_GESTURES,
                 BaseCapability.SLEEP_DETECTION,
@@ -204,6 +215,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods4",
             primaryImageRes = R.drawable.img_airpods_4_anc_buds,
             caseImageRes = R.drawable.img_airpods_4_anc_case,
+            leftImageRes = R.drawable.img_airpods_4_anc_left,
+            rightImageRes = R.drawable.img_airpods_4_anc_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,
@@ -238,6 +251,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods4",
             primaryImageRes = R.drawable.img_airpods_5_buds,
             caseImageRes = R.drawable.img_airpods_5_case,
+            leftImageRes = R.drawable.img_airpods_5_left,
+            rightImageRes = R.drawable.img_airpods_5_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,
@@ -272,6 +287,8 @@ object AirPodsSpecs {
             genericIconName = "AirPods4",
             primaryImageRes = R.drawable.img_airpods_5_wireless_buds,
             caseImageRes = R.drawable.img_airpods_5_wireless_case,
+            leftImageRes = R.drawable.img_airpods_5_wireless_left,
+            rightImageRes = R.drawable.img_airpods_5_wireless_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,
@@ -307,6 +324,8 @@ object AirPodsSpecs {
             genericIconName = "AirPodsPro2",
             primaryImageRes = R.drawable.img_airpods_pro_1_buds,
             caseImageRes = R.drawable.img_airpods_pro_1_case,
+            leftImageRes = R.drawable.img_airpods_pro_1_left,
+            rightImageRes = R.drawable.img_airpods_pro_1_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE
             )
@@ -335,6 +354,8 @@ object AirPodsSpecs {
             genericIconName = "AirPodsPro2",
             primaryImageRes = R.drawable.img_airpods_pro_2_buds,
             caseImageRes = R.drawable.img_airpods_pro_2_case,
+            leftImageRes = R.drawable.img_airpods_pro_2_left,
+            rightImageRes = R.drawable.img_airpods_pro_2_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,
@@ -372,6 +393,8 @@ object AirPodsSpecs {
             genericIconName = "AirPodsPro2",
             primaryImageRes = R.drawable.img_airpods_pro_2_buds,
             caseImageRes = R.drawable.img_airpods_pro_2_case,
+            leftImageRes = R.drawable.img_airpods_pro_2_left,
+            rightImageRes = R.drawable.img_airpods_pro_2_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,
@@ -409,6 +432,8 @@ object AirPodsSpecs {
             genericIconName = "AirPodsPro3",
             primaryImageRes = R.drawable.img_airpods_pro_3_buds,
             caseImageRes = R.drawable.img_airpods_pro_3_case,
+            leftImageRes = R.drawable.img_airpods_pro_3_left,
+            rightImageRes = R.drawable.img_airpods_pro_3_right,
             baseCapabilities = setOf(
                 BaseCapability.LISTENING_MODE,
                 BaseCapability.CONVERSATION_AWARENESS,

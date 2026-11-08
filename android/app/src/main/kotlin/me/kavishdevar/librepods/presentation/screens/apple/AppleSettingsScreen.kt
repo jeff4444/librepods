@@ -259,7 +259,9 @@ fun AppleSettingsScreen(
                 BatteryView(
                     batteryList = state.battery,
                     primaryImageRes = spec.primaryImageRes,
-                    caseImageRes = spec.caseImageRes
+                    caseImageRes = spec.caseImageRes,
+                    leftImageRes = spec.leftImageRes,
+                    rightImageRes = spec.rightImageRes,
                 )
             }
 

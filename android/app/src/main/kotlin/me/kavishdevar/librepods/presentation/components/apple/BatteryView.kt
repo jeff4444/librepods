@@ -28,12 +28,14 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -62,8 +65,15 @@ fun BatteryView(
     batteryList: Set<Battery>,
     @DrawableRes primaryImageRes: Int,
     @DrawableRes caseImageRes: Int?,
-    surfaceColor: Color = Color.Unspecified
+    surfaceColor: Color = Color.Unspecified,
+    // With a picture of each bud, the header always shows left, right and case side by side.
+    @DrawableRes leftImageRes: Int? = null,
+    @DrawableRes rightImageRes: Int? = null,
 ) {
+    if (leftImageRes != null && rightImageRes != null && batteryList.none { it.component == BatteryComponent.HEADSET }) {
+        SeparateParts(batteryList, leftImageRes, rightImageRes, caseImageRes, surfaceColor)
+        return
+    }
     Row(
         modifier = Modifier
             .widthIn(max = 350.dp)
@@ -196,6 +206,62 @@ fun BatteryView(
     }
 }
 
+
+/** Left bud, right bud and case in equal columns, each picture with its battery under it. */
+@Composable
+private fun SeparateParts(
+    batteryList: Set<Battery>,
+    @DrawableRes leftImageRes: Int,
+    @DrawableRes rightImageRes: Int,
+    @DrawableRes caseImageRes: Int?,
+    surfaceColor: Color,
+) {
+    val parts = listOfNotNull(
+        Triple(BatteryComponent.LEFT, leftImageRes, R.string.left),
+        Triple(BatteryComponent.RIGHT, rightImageRes, R.string.right),
+        caseImageRes?.let { Triple(BatteryComponent.CASE, it, R.string.case_alt) },
+    )
+    Row(
+        modifier = Modifier
+            .widthIn(max = 420.dp)
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        for ((component, image, label) in parts) {
+            val battery = batteryList.find { it.component == component }
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = androidx.compose.ui.res.painterResource(image),
+                        contentDescription = stringResource(label),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (battery != null) {
+                    BatteryIndicator(battery = battery, surfaceColor = surfaceColor)
+                } else {
+                    // Not reported (a Pixel Buds case while the buds are out, say).
+                    Text(
+                        text = "–",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Preview
 @Composable
