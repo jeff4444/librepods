@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google's "gs_tws_left_bud" symbol, from the Pixel Buds app; tinted where used. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M263,668Zm37,212q-91,0-155.5-64T80,661q0-76 45-134t115-78v86q-35,17-57.5,50.5T160,661q0,58 41,99t99,41q16,0 34-4.5T366,784q18,13 38,23.5T446,825q-29,26-66.5,40.5T300,880ZM678,712q59-48 76-122q-41,42-96,66T540,680T422,656t-96-66q17,74 76,122t138,48t138-48Zm17.5-176Q760,472 760,381q0-92-64-156.5T540,160T384,224.5T320,381q0,91 64.5,155T540,600t155.5-64Zm-368,216.5Q240,665 240,540V381q0-125 87.5-213T540,80t212.5,88T840,381V540q0,125-87.5,212.5T540,840T327.5,752.5ZM540,680Z" />
+</vector>

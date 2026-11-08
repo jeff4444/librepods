@@ -21,6 +21,7 @@ import me.kavishdevar.librepods.core.bluetooth.verifyRPA
 import me.kavishdevar.librepods.core.data.apple.AccessoryState
 import me.kavishdevar.librepods.core.data.apple.DeviceColor
 import me.kavishdevar.librepods.core.devices.AppleDevice
+import me.kavishdevar.librepods.core.devices.PixelBudsDevice
 import me.kavishdevar.librepods.core.devices.Battery
 import me.kavishdevar.librepods.core.devices.BatteryComponent
 import me.kavishdevar.librepods.core.devices.BatterySource
@@ -92,6 +93,8 @@ class BLEManager(
                                     device.updateConnectionState(ConnectionState.DISCONNECTED)
                                 }
                             }
+                            // Pixel Buds aren't tracked from broadcasts.
+                            is PixelBudsDevice -> {}
                         }
                     }
                 }

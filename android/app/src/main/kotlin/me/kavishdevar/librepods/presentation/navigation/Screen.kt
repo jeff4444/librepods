@@ -23,6 +23,11 @@ sealed interface Screen: NavKey {
     ): DeviceScreen
 
     @Serializable
+    data class PixelBudsScreen(
+        override val macAddress: MacAddress
+    ): DeviceScreen
+
+    @Serializable
     data class Rename(
         override val macAddress: MacAddress
     ): DeviceScreen

@@ -82,7 +82,7 @@ fun BatteryView(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Image(
-                    bitmap = ImageBitmap.imageResource(primaryImageRes),
+                    painter = androidx.compose.ui.res.painterResource(primaryImageRes),
                     contentDescription = "Headset",
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -114,7 +114,7 @@ fun BatteryView(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        bitmap = ImageBitmap.imageResource(primaryImageRes),
+                        painter = androidx.compose.ui.res.painterResource(primaryImageRes),
                         contentDescription = stringResource(R.string.buds),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -179,7 +179,7 @@ fun BatteryView(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        bitmap = ImageBitmap.imageResource(caseImageRes?: coreR.drawable.img_airpods_pro_3_case),
+                        painter = androidx.compose.ui.res.painterResource(caseImageRes?: coreR.drawable.img_airpods_pro_3_case),
                         contentDescription = stringResource(R.string.case_alt),
                         modifier = Modifier.fillMaxWidth()
                     )

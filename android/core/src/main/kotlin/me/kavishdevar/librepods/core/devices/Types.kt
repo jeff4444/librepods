@@ -55,7 +55,8 @@ enum class BatteryStatus {
 enum class BatterySource {
     AACP,
     CASE_ADVERT,
-    BUDS_ADVERT
+    BUDS_ADVERT,
+    MAESTRO
 }
 
 @Parcelize

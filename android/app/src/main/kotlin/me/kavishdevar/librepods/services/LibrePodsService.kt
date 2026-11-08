@@ -74,6 +74,12 @@ import me.kavishdevar.librepods.core.data.heartrate.HeartRateSample
 import me.kavishdevar.librepods.core.data.recording.Recording
 import me.kavishdevar.librepods.core.devices.AirPodsSpecs
 import me.kavishdevar.librepods.core.devices.AppleDevice
+import me.kavishdevar.librepods.core.devices.PixelBudsDevice
+import me.kavishdevar.librepods.core.devices.PixelBudsState
+import me.kavishdevar.librepods.core.bluetooth.maestro.MaestroClient
+import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
+import me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsArt
+import me.kavishdevar.librepods.core.devices.PixelBudsMetadata
 import me.kavishdevar.librepods.core.devices.AppleSettings
 import me.kavishdevar.librepods.core.devices.AppleState
 import me.kavishdevar.librepods.core.devices.BatteryComponent
@@ -91,7 +97,6 @@ import me.kavishdevar.librepods.database.app.AppSettingsEntity
 import me.kavishdevar.librepods.presentation.activities.MainActivity
 import me.kavishdevar.librepods.presentation.overlays.IslandType
 import me.kavishdevar.librepods.presentation.overlays.IslandWindow
-import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
 import me.kavishdevar.librepods.presentation.widgets.BatteryWidget
 import me.kavishdevar.librepods.utils.MediaController
 import me.kavishdevar.librepods.utils.calculateLevel
@@ -114,8 +119,11 @@ private const val DEBUG_HOLD = "me.kavishdevar.librepods.DEBUG_HOLD"
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HEAD_TRACKER --ei seconds 20 -p me.kavishdevar.librepods.dev2
 private const val DEBUG_HEAD_TRACKER = "me.kavishdevar.librepods.DEBUG_HEAD_TRACKER"
 // Pixel Buds: opens their Maestro channel and logs the replies to a few read-only calls:
-//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_MAESTRO --ei seconds 5 -p me.kavishdevar.librepods.dev2
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_MAESTRO --ei seconds 5 [--es uuid <uuid>] [--es host b] -p me.kavishdevar.librepods.dev2
 private const val DEBUG_MAESTRO = "me.kavishdevar.librepods.DEBUG_MAESTRO"
+// Pixel Buds read-only sources: Android's battery level and the buds' Fast Pair broadcasts:
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_PIXELBUDS --ei seconds 90 -p me.kavishdevar.librepods.dev2
+private const val DEBUG_PIXELBUDS = "me.kavishdevar.librepods.DEBUG_PIXELBUDS"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -418,8 +426,17 @@ class LibrePodsService: Service() {
                 debugHeadTracker(intent.getIntExtra("seconds", 20))
                 return
             }
+            if (intent.action == DEBUG_PIXELBUDS) {
+                PixelBudsProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 90))
+                return
+            }
             if (intent.action == DEBUG_MAESTRO) {
-                MaestroProbe.run(this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 5))
+                MaestroProbe.run(
+                    this@LibrePodsService, serviceCoroutineScope, intent.getIntExtra("seconds", 5),
+                    uuid = intent.getStringExtra("uuid")?.let(java.util.UUID::fromString)
+                        ?: java.util.UUID.fromString("25e97ff7-24ce-4c4c-8951-f764a708f7b5"),
+                    hostB = intent.getStringExtra("host") == "b"
+                )
                 return
             }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
@@ -503,12 +520,12 @@ class LibrePodsService: Service() {
      */
     @SuppressLint("MissingPermission")
     private fun displayName(device: Device<*, *, *>): String {
-        val own = (device as? AppleDevice)?.metadata?.value?.name.orEmpty()
+        val own = device.metadata.value.name
         if (own.isNotBlank()) return own
         return runCatching { device.bluetoothDevice.alias ?: device.bluetoothDevice.name }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
-            ?: "AirPods"
+            ?: if (device is PixelBudsDevice) "Pixel Buds" else "AirPods"
     }
 
     /** Whether both buds are known to be in the case: reported in it, or charging. */
@@ -664,6 +681,7 @@ class LibrePodsService: Service() {
                 addAction(DEBUG_HOLD)
                 addAction(DEBUG_HEAD_TRACKER)
                 addAction(DEBUG_MAESTRO)
+                addAction(DEBUG_PIXELBUDS)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)
@@ -724,6 +742,7 @@ class LibrePodsService: Service() {
                                 ControlCommandIdentifier.LISTENING_MODE,
                                 ancMode
                             )
+                            is PixelBudsDevice -> Log.i(TAG, "Pixel Buds are read-only in LibrePods")
                         }
                     } else {
                         Log.w(TAG, "No connected Apple device found or invalid ANC mode: $ancMode")
@@ -803,9 +822,10 @@ class LibrePodsService: Service() {
                     }
                 }
             }
+            is PixelBudsDevice -> {}
         }
 
-        device.connect()
+        if (device is PixelBudsDevice) connectPixelBuds(device) else device.connect()
 
         Log.i(
             TAG,
@@ -813,6 +833,72 @@ class LibrePodsService: Service() {
         )
 
         _devices.update { it + (device.macAddress to device) }
+    }
+
+    /**
+     * Opens the Pixel Buds' Maestro channel. It only answers once Android has the buds connected
+     * and settled, so wait a moment and try a few times. It fails for good while Google's Pixel
+     * Buds app is installed and holding the channel.
+     */
+    private fun connectPixelBuds(device: PixelBudsDevice) {
+        if (device.heldDisconnected) return
+        serviceCoroutineScope.launch(Dispatchers.IO) {
+            for (attempt in 1..3) {
+                delay(if (attempt == 1) 1500L else 3000L)
+                if (device.connectionState.value == ConnectionState.CONNECTED) return@launch
+                if (!isAclConnected(device.bluetoothDevice)) return@launch
+                if (device.connect()) return@launch
+                Log.i(TAG, "Pixel Buds info channel not available yet (attempt $attempt)")
+            }
+        }
+    }
+
+    /**
+     * Pixel Buds overlays, read-only: once a connection reports where the buds are, the case card
+     * if both are in the case (the lid was just opened) and the island otherwise; taking the buds
+     * out swaps the card for the island; disconnecting (lid closed) closes the card.
+     */
+    private fun observePixelBuds(device: PixelBudsDevice) {
+        serviceCoroutineScope.launch {
+            var previous = device.state.value
+            var shownFor = -1
+            device.state.collect { state ->
+                if (!state.battery.hasSameState(previous.battery) || state.leftInCase != previous.leftInCase ||
+                    state.rightInCase != previous.rightInCase) {
+                    updateDeviceNotification(device)
+                }
+                val connected = device.connectionState.value == ConnectionState.CONNECTED
+                val connection = device.connectionNumber.value
+                if (connected && state.leftInCase != null && state.battery.isNotEmpty() && shownFor != connection) {
+                    shownFor = connection
+                    if (state.bothInCase) showPixelBudsCard(device) else showIsland(device, IslandType.CONNECTED)
+                } else if (connected && previous.bothInCase && state.leftInCase != null && !state.bothInCase) {
+                    proximityCardWindow.close()
+                    showIsland(device, IslandType.CONNECTED)
+                } else if (proximityCardWindow.isVisible && !state.battery.hasSameState(previous.battery)) {
+                    proximityCardWindow.updateBatteries(state.battery)
+                }
+                previous = state
+            }
+        }
+        serviceCoroutineScope.launch {
+            device.connectionState.collect { state ->
+                if (state != ConnectionState.CONNECTED && proximityCardWindow.isVisible) proximityCardWindow.close()
+                updateDeviceNotification(device)
+            }
+        }
+    }
+
+    private fun showPixelBudsCard(device: PixelBudsDevice) {
+        if (!Settings.canDrawOverlays(this)) return
+        Log.i(TAG, "showing the case card for ${device.macAddress.toRedactedString()}")
+        proximityCardWindow.show(
+            name = displayName(device),
+            batteries = device.state.value.battery,
+            onConnect = { serviceCoroutineScope.launch(Dispatchers.IO) { device.connectByUser() } },
+            airPodsConnected = true,
+            images = ProximityCardWindow.CardImages(PixelBudsArt.buds(device.metadata.value), PixelBudsArt.case),
+        )
     }
 
     /** Disconnects a device the user disconnected in LibrePods that came back some other way. */
@@ -1001,6 +1087,16 @@ class LibrePodsService: Service() {
                 )
             }
 
+            bluetoothDevice.uuids?.any { it.uuid == MaestroClient.UUID } == true -> {
+                Log.i(TAG, "Pixel Buds detected: ${bluetoothDevice.address.redactMac()}")
+                PixelBudsDevice(
+                    context = this,
+                    bluetoothAdapter = bluetoothAdapter,
+                    bluetoothDevice = bluetoothDevice,
+                    currentState = if (isConnectedMethod.invoke(bluetoothDevice) as Boolean) ConnectionState.AVAILABLE else ConnectionState.DISCONNECTED
+                )
+            }
+
             else -> null
         }
 
@@ -1066,6 +1162,11 @@ class LibrePodsService: Service() {
                     }
                 }
             }
+            is PixelBudsDevice -> {
+                observePixelBuds(device)
+                if (connectIfUp && isConnectedMethod.invoke(bluetoothDevice) as Boolean) connectPixelBuds(device)
+            }
+            null -> {}
         }
 
         if (device != null) observeConnectionState(device)
@@ -1136,6 +1237,7 @@ class LibrePodsService: Service() {
                                 }
                             }
                         }
+                        is PixelBudsDevice -> {}
                     }
                 }
 
@@ -1624,6 +1726,27 @@ class LibrePodsService: Service() {
                 }
             }
 
+            is PixelBudsState -> {
+                if (!Settings.canDrawOverlays(this)) return
+                val levels = state.battery
+                    .filter { (it.component == BatteryComponent.LEFT || it.component == BatteryComponent.RIGHT) && it.status != BatteryStatus.DISCONNECTED }
+                    .map { it.level }
+                if (levels.isEmpty()) return
+                Log.i(TAG, "Showing island for Pixel Buds ${device.macAddress.toRedactedString()}")
+                islandWindow.show(
+                    name = displayName(device),
+                    batteryLevel = levels.min(),
+                    type = type,
+                    reversed = reversed,
+                    otherDeviceName = otherDeviceName,
+                    openApp = {
+                        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    },
+                    imageRes = PixelBudsArt.buds(device.metadata.value as PixelBudsMetadata),
+                    monochromeIconRes = PixelBudsArt.icon,
+                )
+            }
+
             else -> {
                 Log.d(
                     TAG,
@@ -1745,6 +1868,30 @@ class LibrePodsService: Service() {
                     val updatedNotification = updatedNotificationBuilder.build()
 
                     notificationManager.notify(notificationId, updatedNotification)
+                }
+                is PixelBudsDevice -> {
+                    val state = device.state.value
+                    val parts = listOf(BatteryComponent.LEFT to "L", BatteryComponent.RIGHT to "R", BatteryComponent.CASE to "Case")
+                        .mapNotNull { (component, label) ->
+                            state.battery.find { it.component == component && it.status != BatteryStatus.DISCONNECTED }?.let {
+                                "$label ${it.level}%" + if (it.status == BatteryStatus.CHARGING) " (charging)" else ""
+                            }
+                        }
+                    val text = when {
+                        parts.isNotEmpty() -> parts.joinToString("   ")
+                        device.connectionState.value == ConnectionState.CONNECTED -> "Connected"
+                        else -> "Connected; details unavailable"
+                    }
+                    val notification = NotificationCompat.Builder(this, "device_${device.macAddress}")
+                        .setSmallIcon(PixelBudsArt.icon)
+                        .setContentTitle(displayName(device))
+                        .setContentText(text)
+                        .setContentIntent(pendingIntent)
+                        .setCategory(Notification.CATEGORY_STATUS)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .setOngoing(true)
+                        .build()
+                    notificationManager.notify(notificationId, notification)
                 }
             }
 

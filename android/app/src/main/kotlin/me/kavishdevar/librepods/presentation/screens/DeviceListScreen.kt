@@ -439,13 +439,24 @@ fun DeviceListScreen(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = LocalIcons.current.fromName(deviceMetadata.iconName)
-                                        ?: LocalIcons.current.Headphones,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
-                                    tint = iconColor
-                                )
+                                if (device is me.kavishdevar.librepods.core.devices.PixelBudsDevice) {
+                                    Icon(
+                                        painter = androidx.compose.ui.res.painterResource(
+                                            me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsArt.icon
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(32.dp),
+                                        tint = iconColor
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = LocalIcons.current.fromName(deviceMetadata.iconName)
+                                            ?: LocalIcons.current.Headphones,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(32.dp),
+                                        tint = iconColor
+                                    )
+                                }
                             }
                         },
                         supportingContent = {
@@ -463,6 +474,22 @@ fun DeviceListScreen(
                                 ConnectionState.AVAILABLE,
                                 ConnectionState.CONNECTED -> {
                                     when (deviceState) {
+                                        is me.kavishdevar.librepods.core.devices.PixelBudsState -> {
+                                            val parts = listOf(
+                                                me.kavishdevar.librepods.core.devices.BatteryComponent.LEFT to "L",
+                                                me.kavishdevar.librepods.core.devices.BatteryComponent.RIGHT to "R",
+                                                me.kavishdevar.librepods.core.devices.BatteryComponent.CASE to "Case",
+                                            ).mapNotNull { (component, label) ->
+                                                (deviceState as me.kavishdevar.librepods.core.devices.PixelBudsState).battery
+                                                    .find { it.component == component && it.status != me.kavishdevar.librepods.core.devices.BatteryStatus.DISCONNECTED }
+                                                    ?.let { "$label ${it.level}%" }
+                                            }
+                                            Text(
+                                                text = if (parts.isNotEmpty()) parts.joinToString("   ") else stringResource(R.string.not_connected),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         is AppleState -> {
                                             Column(
                                                 verticalArrangement = Arrangement.spacedBy(8.dp),

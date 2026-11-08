@@ -44,6 +44,7 @@ fun NavigationRoot(
         if (connectedDevice != null && !showReleaseNotes) {
             val targetScreen = when (connectedDevice) {
                 is AppleDevice -> Screen.AppleScreen(connectedDevice.macAddress)
+                is me.kavishdevar.librepods.core.devices.PixelBudsDevice -> Screen.PixelBudsScreen(connectedDevice.macAddress)
             }
 
             if (targetScreen !in backStack) {

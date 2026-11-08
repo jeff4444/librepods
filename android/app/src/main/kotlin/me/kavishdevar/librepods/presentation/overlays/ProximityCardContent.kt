@@ -130,6 +130,8 @@ fun ProximityCardContent(
     val context = LocalContext.current
 
     val videoResId = remember(darkTheme) {
+        // 0: this device has no video (Pixel Buds), use the pictures instead.
+        if (videoResId == 0) return@remember 0
         val config = Configuration(context.resources.configuration).apply {
             uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
                 if (darkTheme) Configuration.UI_MODE_NIGHT_YES
@@ -285,7 +287,7 @@ fun ProximityCardContent(
                         },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (settings.useVideo) {
+                        if (settings.useVideo && videoResId != 0) {
                             VideoBatteryLayout(
                                 batteryList = batteries,
                                 videoResId = videoResId,

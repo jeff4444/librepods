@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The case in the card: Google's case symbol (from the Pixel Buds app), in a neutral grey that
+     reads on light and dark cards. Google's app has no picture of the Pro 2 case. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="#FF8A8F86"
+        android:pathData="M480,800q100,0 170-70t70-170V440H240V560q0,100 70,170t170,70ZM243,360H717q-14-88-81.5-144T480,160T324.5,216T243,360Zm557,40H160q0-134 93-227T480,80t227,93t93,227ZM480,880q-134,0-227-93T160,560V400H800V560q0,134-93,227T480,880Zm0-440Zm0-80Z" />
+</vector>

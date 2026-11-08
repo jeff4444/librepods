@@ -60,6 +60,10 @@ class ProximityCardWindow(
     private var name by mutableStateOf("AirPods Pro2")
     private var batteries by mutableStateOf(emptySet<Battery>())
     private var spec by mutableStateOf(AirPodsSpecs.getSpec(AirPodsModel.AIRPODS_PRO_3))
+    private var images by mutableStateOf(null as CardImages?)
+
+    /** The card's pictures; [videoResId] 0 means none, and the pictures are shown instead. */
+    data class CardImages(val primaryImageRes: Int, val caseImageRes: Int?, val videoResId: Int = 0)
     private var onConnect: () -> Unit = {}
     private var airPodsConnected by mutableStateOf(false)
 
@@ -140,14 +144,17 @@ class ProximityCardWindow(
         batteries: Set<Battery> = this.batteries,
         spec: AirPodsSpec = AirPodsSpecs.getSpec(AirPodsModel.AIRPODS_PRO_3),
         onConnect: () -> Unit = this.onConnect,
-        airPodsConnected: Boolean = this.airPodsConnected
+        airPodsConnected: Boolean = this.airPodsConnected,
+        // Pictures for a device that isn't AirPods (Pixel Buds); null uses [spec]'s.
+        images: CardImages? = null,
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             Handler(Looper.getMainLooper()).post {
-                show(name, batteries, spec, onConnect, airPodsConnected)
+                show(name, batteries, spec, onConnect, airPodsConnected, images)
             }
             return
         }
+        this.images = images
 
         this.name = name
         this.batteries = batteries
@@ -258,9 +265,9 @@ class ProximityCardWindow(
                         batteries = batteries,
                         settings = appSettings.proximityCardSettings,
 
-                        primaryImageRes = spec.primaryImageRes,
-                        caseImageRes = spec.caseImageRes,
-                        videoResId = spec.videoResId,
+                        primaryImageRes = images?.primaryImageRes ?: spec.primaryImageRes,
+                        caseImageRes = images?.caseImageRes ?: spec.caseImageRes,
+                        videoResId = images?.videoResId ?: spec.videoResId,
 
                         cardState = cardState,
                         onConnect = onConnect,

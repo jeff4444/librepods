@@ -95,6 +95,11 @@ fun IslandContent(
     onNoiseControlModeChanged: (Int) -> Unit,
     adaptiveStrength: Int = 0,
     onAdaptiveStrengthChanged: (Int) -> Unit,
+
+    // The device's picture, and the monochrome icon used instead when the settings ask for one;
+    // null keeps the AirPods ones.
+    @androidx.annotation.DrawableRes imageRes: Int? = null,
+    @androidx.annotation.DrawableRes monochromeIconRes: Int? = null,
 ) {
     val density = LocalDensity.current
 
@@ -338,15 +343,24 @@ fun IslandContent(
                     targetState = useMonochrome,
                 ) {
                     if (it) {
-                        Icon(
-                            imageVector = LocalIcons.current.AirPodsPro3,
-                            contentDescription = null,
-                            tint = textColor,
-                            modifier = Modifier.fillMaxHeight(0.8f)
-                        )
+                        if (monochromeIconRes != null) {
+                            Icon(
+                                painter = androidx.compose.ui.res.painterResource(monochromeIconRes),
+                                contentDescription = null,
+                                tint = textColor,
+                                modifier = Modifier.fillMaxHeight(0.8f).aspectRatio(1f)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = LocalIcons.current.AirPodsPro3,
+                                contentDescription = null,
+                                tint = textColor,
+                                modifier = Modifier.fillMaxHeight(0.8f)
+                            )
+                        }
                     } else {
                         Image(
-                            bitmap = ImageBitmap.imageResource(coreR.drawable.img_airpods_pro_2_buds), // TODO: use correct icon for model
+                            bitmap = ImageBitmap.imageResource(imageRes ?: coreR.drawable.img_airpods_pro_2_buds),
                             contentDescription = null,
                             modifier = Modifier
                                 .heightIn(max = 64.dp)

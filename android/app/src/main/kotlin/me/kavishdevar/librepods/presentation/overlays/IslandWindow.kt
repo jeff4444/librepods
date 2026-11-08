@@ -95,6 +95,8 @@ class IslandWindow(
     private var onAdaptiveStrengthChanged: (Int) -> Unit = { adaptiveStrength = it }
 
     private var openApp: () -> Unit = {}
+    private var imageRes by mutableStateOf(null as Int?)
+    private var monochromeIconRes by mutableStateOf(null as Int?)
 
     var usingAccessibilityService by mutableStateOf(false)
         private set
@@ -195,13 +197,15 @@ class IslandWindow(
         onAdaptiveStrengthChanged: (Int) -> Unit = this.onAdaptiveStrengthChanged,
 
         forcedState: IslandState? = null,
-        keepOpen: Boolean = false
+        keepOpen: Boolean = false,
+        imageRes: Int? = null,
+        monochromeIconRes: Int? = null,
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             Handler(Looper.getMainLooper()).post {
                 show(name, batteryLevel, type, reversed, otherDeviceName, onReverseAction,
                     openApp, showOffListeningMode, noiseControlModeValue, onNoiseControlModeChanged,
-                    adaptiveStrength, onAdaptiveStrengthChanged, forcedState, keepOpen)
+                    adaptiveStrength, onAdaptiveStrengthChanged, forcedState, keepOpen, imageRes, monochromeIconRes)
             }
             return
         }
@@ -209,6 +213,8 @@ class IslandWindow(
         Log.d("IslandWindow", "Showing island window: accessibility = $usingAccessibilityService")
 
         this.batteryLevel = batteryLevel
+        this.imageRes = imageRes
+        this.monochromeIconRes = monochromeIconRes
 
         this.name = name
         this.type = type
@@ -366,7 +372,9 @@ class IslandWindow(
                         noiseControlModeValue = noiseControlModeValue,
                         onNoiseControlModeChanged = this@IslandWindow.onNoiseControlModeChanged,
                         adaptiveStrength = this@IslandWindow.adaptiveStrength,
-                        onAdaptiveStrengthChanged = this@IslandWindow.onAdaptiveStrengthChanged
+                        onAdaptiveStrengthChanged = this@IslandWindow.onAdaptiveStrengthChanged,
+                        imageRes = this@IslandWindow.imageRes,
+                        monochromeIconRes = this@IslandWindow.monochromeIconRes
                     )
                 }
             }

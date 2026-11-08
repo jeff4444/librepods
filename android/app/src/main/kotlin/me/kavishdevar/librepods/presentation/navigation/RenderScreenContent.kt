@@ -118,6 +118,7 @@ fun RenderScreenContent(
                 navigateToDevice = { macAddress ->
                     when (devices[macAddress]) {
                         is AppleDevice -> navigate(Screen.AppleScreen(macAddress))
+                        is me.kavishdevar.librepods.core.devices.PixelBudsDevice -> navigate(Screen.PixelBudsScreen(macAddress))
                         else -> {}
                     }
                 },
@@ -127,6 +128,14 @@ fun RenderScreenContent(
                         else -> {}
                     }
                 }
+            )
+        }
+
+        is Screen.PixelBudsScreen -> {
+            val device = devices[screen.macAddress] as? me.kavishdevar.librepods.core.devices.PixelBudsDevice ?: return
+            me.kavishdevar.librepods.presentation.screens.pixelbuds.PixelBudsScreen(
+                device = device,
+                navigateBack = navigateBack
             )
         }
 

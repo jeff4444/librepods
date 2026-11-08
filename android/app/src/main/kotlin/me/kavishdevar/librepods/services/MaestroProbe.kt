@@ -48,26 +48,37 @@ object MaestroProbe {
 
     private data class Channel(val id: Int, val address: Int, val name: String)
 
-    private val CHANNELS = listOf(
-        Channel(19, (10 shl 6) or (3 shl 10), "left"),
-        Channel(21, (10 shl 6) or (4 shl 10), "right"),
-        Channel(18, (10 shl 6) or (2 shl 10), "case"),
-    )
+    // Host slot A (peer 10, channels 18-22) is what Google's app uses; slot B (peer 13, channels
+    // 23-27) is the second one in pbpctrl's address map.
+    private fun channels(hostB: Boolean): List<Channel> {
+        val host = if (hostB) 13 else 10
+        val base = if (hostB) 23 else 18
+        return listOf(
+            Channel(base + 1, (host shl 6) or (3 shl 10), "left"),
+            Channel(base + 3, (host shl 6) or (4 shl 10), "right"),
+            Channel(base, (host shl 6) or (2 shl 10), "case"),
+        )
+    }
 
+    /**
+     * [uuid] picks the RFCOMM service (default: Maestro, `…f7b5`; the buds also offer `…f7b4`), and
+     * [hostB] addresses the calls from host slot B instead of A.
+     */
     @SuppressLint("MissingPermission")
-    fun run(context: Context, scope: CoroutineScope, seconds: Int) {
+    fun run(context: Context, scope: CoroutineScope, seconds: Int, uuid: UUID = MAESTRO_UUID, hostB: Boolean = false) {
+        val CHANNELS = channels(hostB)
         scope.launch(Dispatchers.IO) {
             val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return@launch
             val buds = adapter.bondedDevices.firstOrNull { device ->
-                device.uuids?.any { it.uuid == MAESTRO_UUID } == true
+                device.uuids?.any { it.uuid == MAESTRO_UUID || it.uuid == uuid } == true
             }
             if (buds == null) {
                 Log.w(TAG, "no bonded device offers the Maestro service")
                 return@launch
             }
-            Log.i(TAG, "opening Maestro on ${buds.name}")
+            Log.i(TAG, "opening $uuid on ${buds.name}, host slot ${if (hostB) "B" else "A"}")
             val socket = try {
-                buds.createRfcommSocketToServiceRecord(MAESTRO_UUID).also { it.connect() }
+                buds.createRfcommSocketToServiceRecord(uuid).also { it.connect() }
             } catch (e: Exception) {
                 Log.w(TAG, "couldn't open the Maestro channel: ${e.message}")
                 return@launch
