@@ -75,6 +75,7 @@ import me.kavishdevar.librepods.core.data.recording.Recording
 import me.kavishdevar.librepods.core.devices.AirPodsSpecs
 import me.kavishdevar.librepods.core.devices.AppleDevice
 import me.kavishdevar.librepods.core.devices.PixelBudsDevice
+import me.kavishdevar.librepods.core.devices.PixelBudsNoiseMode
 import me.kavishdevar.librepods.core.devices.PixelBudsState
 import me.kavishdevar.librepods.core.bluetooth.maestro.MaestroClient
 import me.kavishdevar.librepods.presentation.overlays.ProximityCardWindow
@@ -82,6 +83,7 @@ import me.kavishdevar.librepods.presentation.components.pixelbuds.PixelBudsArt
 import me.kavishdevar.librepods.core.devices.PixelBudsMetadata
 import me.kavishdevar.librepods.core.devices.AppleSettings
 import me.kavishdevar.librepods.core.devices.AppleState
+import me.kavishdevar.librepods.core.devices.Battery
 import me.kavishdevar.librepods.core.devices.BatteryComponent
 import me.kavishdevar.librepods.core.devices.BatteryStatus
 import me.kavishdevar.librepods.core.devices.ComponentStatus
@@ -95,6 +97,7 @@ import me.kavishdevar.librepods.core.utils.redactMac
 import me.kavishdevar.librepods.data.app.LibrePodsIntents
 import me.kavishdevar.librepods.database.app.AppSettingsEntity
 import me.kavishdevar.librepods.presentation.activities.MainActivity
+import me.kavishdevar.librepods.presentation.overlays.BannerBattery
 import me.kavishdevar.librepods.presentation.overlays.IslandType
 import me.kavishdevar.librepods.presentation.overlays.IslandWindow
 import me.kavishdevar.librepods.presentation.widgets.BatteryWidget
@@ -778,7 +781,7 @@ class LibrePodsService: Service() {
                                 ControlCommandIdentifier.LISTENING_MODE,
                                 ancMode
                             )
-                            is PixelBudsDevice -> Log.i(TAG, "Pixel Buds are read-only in LibrePods")
+                            is PixelBudsDevice -> PixelBudsNoiseMode.from(ancMode)?.let(device::setNoiseMode)
                         }
                     } else {
                         Log.w(TAG, "No connected Apple device found or invalid ANC mode: $ancMode")
@@ -896,7 +899,7 @@ class LibrePodsService: Service() {
     }
 
     /**
-     * Pixel Buds overlays, read-only: once a connection reports where the buds are, the case card
+     * Pixel Buds overlays: once a connection reports where the buds are, the case card
      * if both are in the case (the lid was just opened) and the island otherwise; taking the buds
      * out swaps the card for the island; disconnecting (lid closed) closes the card.
      */
@@ -906,7 +909,7 @@ class LibrePodsService: Service() {
             var shownFor = -1
             device.state.collect { state ->
                 if (!state.battery.hasSameState(previous.battery) || state.leftInCase != previous.leftInCase ||
-                    state.rightInCase != previous.rightInCase) {
+                    state.rightInCase != previous.rightInCase || state.noiseMode != previous.noiseMode) {
                     updateDeviceNotification(device)
                 }
                 val connected = device.connectionState.value == ConnectionState.CONNECTED
@@ -925,6 +928,14 @@ class LibrePodsService: Service() {
                     showIsland(device, IslandType.CONNECTED)
                 } else if (cardShows(device) && !state.battery.hasSameState(previous.battery)) {
                     proximityCardWindow.updateBatteries(state.battery)
+                }
+                if (islandWindow.isVisible && islandDevice == device.macAddress) {
+                    if (!state.battery.hasSameState(previous.battery)) {
+                        islandWindow.updateBatteries(bannerBatteries(state.battery))
+                        state.battery.filter { (it.component == BatteryComponent.LEFT || it.component == BatteryComponent.RIGHT) && it.status != BatteryStatus.DISCONNECTED }
+                            .minOfOrNull { it.level }?.let(islandWindow::updateBattery)
+                    }
+                    state.noiseMode?.let { if (it != previous.noiseMode) islandWindow.updateNoiseControl(it.value, 50, true) }
                 }
                 previous = state
             }
@@ -1484,8 +1495,9 @@ class LibrePodsService: Service() {
                         Log.d(TAG, "updating widgets")
                         updateWidgets()
 
-                        if (islandWindow.isVisible) {
+                        if (islandWindow.isVisible && islandDevice == device.macAddress) {
                             Log.d(TAG, "updating island window")
+                            islandWindow.updateBatteries(bannerBatteries(state.battery))
                             val leftBattery = state.battery.find { it.component == BatteryComponent.LEFT }
                             val rightBattery = state.battery.find { it.component == BatteryComponent.RIGHT }
 
@@ -1733,6 +1745,17 @@ class LibrePodsService: Service() {
         }
     }
 
+    // The device the island (or banner) is showing, so another device's updates don't land on it.
+    private var islandDevice: MacAddress? = null
+
+    /** Battery parts for the banner's line, in the order Android's own banner uses. */
+    private fun bannerBatteries(battery: Set<Battery>): List<BannerBattery> =
+        listOf(BatteryComponent.LEFT to "Left", BatteryComponent.CASE to "Case", BatteryComponent.RIGHT to "Right")
+            .mapNotNull { (component, label) ->
+                battery.find { it.component == component && it.status != BatteryStatus.DISCONNECTED }
+                    ?.let { BannerBattery(label, it.level, it.status == BatteryStatus.CHARGING) }
+            }
+
     fun showIsland(
         device: Device<*, *, *>,
         type: IslandType = IslandType.CONNECTED,
@@ -1797,8 +1820,10 @@ class LibrePodsService: Service() {
                             device.setControlCommand(
                                 ControlCommandIdentifier.AUTO_ANC_STRENGTH, it
                             )
-                        }
+                        },
+                        batteries = bannerBatteries(state.battery),
                     )
+                    islandDevice = device.macAddress
                 }
             }
 
@@ -1818,9 +1843,18 @@ class LibrePodsService: Service() {
                     openApp = {
                         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     },
+                    showOffListeningMode = true,
+                    noiseControlModeValue = state.noiseMode?.value ?: PixelBudsNoiseMode.NOISE_CANCELLATION.value,
+                    onNoiseControlModeChanged = { value ->
+                        PixelBudsNoiseMode.from(value)?.let { (device as PixelBudsDevice).setNoiseMode(it) }
+                    },
+                    adaptiveStrength = 50,
+                    onAdaptiveStrengthChanged = { },
                     imageRes = PixelBudsArt.buds(device.metadata.value as PixelBudsMetadata),
                     monochromeIconRes = PixelBudsArt.icon,
+                    batteries = bannerBatteries(state.battery),
                 )
+                islandDevice = device.macAddress
             }
 
             else -> {
@@ -1958,7 +1992,7 @@ class LibrePodsService: Service() {
                         device.connectionState.value == ConnectionState.CONNECTED -> "Connected"
                         else -> "Connected; details unavailable"
                     }
-                    val notification = NotificationCompat.Builder(this, "device_${device.macAddress}")
+                    val builder = NotificationCompat.Builder(this, "device_${device.macAddress}")
                         .setSmallIcon(PixelBudsArt.icon)
                         .setContentTitle(displayName(device))
                         .setContentText(text)
@@ -1966,8 +2000,33 @@ class LibrePodsService: Service() {
                         .setCategory(Notification.CATEGORY_STATUS)
                         .setPriority(NotificationCompat.PRIORITY_LOW)
                         .setOngoing(true)
-                        .build()
-                    notificationManager.notify(notificationId, notification)
+                        .setOnlyAlertOnce(true)
+                    if (device.connectionState.value == ConnectionState.CONNECTED) {
+                        // Same numbering as AirPods: 1 off, 2 noise cancellation, 3 transparency, 4 adaptive.
+                        val current = state.noiseMode?.value
+                        for ((mode, label, icon) in listOf(
+                            Triple(1, R.string.off, R.drawable.ic_noise_cancellation),
+                            Triple(3, R.string.transparency, R.drawable.ic_transparency),
+                            Triple(4, R.string.adaptive, R.drawable.ic_adaptive),
+                            Triple(2, R.string.noise_cancellation, R.drawable.ic_noise_cancellation),
+                        )) {
+                            builder.addAction(
+                                icon,
+                                (if (mode == current) "• " else "") + getString(label),
+                                PendingIntent.getService(
+                                    this,
+                                    notificationId + mode,
+                                    Intent(this, LibrePodsService::class.java).apply {
+                                        action = LibrePodsIntents.ACTION_SET_ANC_MODE
+                                        putExtra(LibrePodsIntents.Extras.MAC_ADDRESS, device.macAddress.toString())
+                                        putExtra(LibrePodsIntents.Extras.ANC_MODE, mode)
+                                    },
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                                ),
+                            )
+                        }
+                    }
+                    notificationManager.notify(notificationId, builder.build())
                 }
             }
 

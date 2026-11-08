@@ -18,6 +18,7 @@
 
 package me.kavishdevar.librepods.presentation.overlays
 
+import me.kavishdevar.librepods.data.app.DesignSystem
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Handler
@@ -97,6 +98,10 @@ class IslandWindow(
     private var openApp: () -> Unit = {}
     private var imageRes by mutableStateOf(null as Int?)
     private var monochromeIconRes by mutableStateOf(null as Int?)
+    private var batteries by mutableStateOf(emptyList<BannerBattery>())
+
+    /** The Material design shows a banner instead of the island. */
+    private val usesBanner: Boolean get() = currentAppSettings.designSystem == DesignSystem.Material
 
     var usingAccessibilityService by mutableStateOf(false)
         private set
@@ -164,6 +169,14 @@ class IslandWindow(
         this.batteryLevel = batteryPercentage
     }
 
+    fun updateBatteries(batteries: List<BannerBattery>) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Handler(Looper.getMainLooper()).post { updateBatteries(batteries) }
+            return
+        }
+        this.batteries = batteries
+    }
+
     fun updateNoiseControl(mode: Int, strength: Int, showOff: Boolean = showOffListeningMode) {
         this.noiseControlModeValue = mode
         this.adaptiveStrength = strength
@@ -200,15 +213,18 @@ class IslandWindow(
         keepOpen: Boolean = false,
         imageRes: Int? = null,
         monochromeIconRes: Int? = null,
+        batteries: List<BannerBattery> = emptyList(),
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             Handler(Looper.getMainLooper()).post {
                 show(name, batteryLevel, type, reversed, otherDeviceName, onReverseAction,
                     openApp, showOffListeningMode, noiseControlModeValue, onNoiseControlModeChanged,
-                    adaptiveStrength, onAdaptiveStrengthChanged, forcedState, keepOpen, imageRes, monochromeIconRes)
+                    adaptiveStrength, onAdaptiveStrengthChanged, forcedState, keepOpen, imageRes, monochromeIconRes,
+                    batteries)
             }
             return
         }
+        this.batteries = batteries
 
         Log.d("IslandWindow", "Showing island window: accessibility = $usingAccessibilityService")
 
@@ -293,6 +309,26 @@ class IslandWindow(
         } else {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         }
+        if (usesBanner) {
+            val metrics = windowManager.currentWindowMetrics
+            val density = context.resources.displayMetrics.density
+            return WindowManager.LayoutParams(
+                // Full width up to a card's (the banner pads itself), as tall as it needs.
+                metrics.bounds.width().coerceAtMost((504 * density).roundToInt()),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                windowType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_SPLIT_TOUCH or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSPARENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                // Just under the status bar, like Android's own banners.
+                y = metrics.windowInsets.getInsets(WindowInsets.Type.statusBars()).top
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         val islandSettings = resolvedIslandSettings(appSettings.islandSettings)
         return WindowManager.LayoutParams(
             // Room for the opening spring's overshoot and the press scale, within the screen.
@@ -344,7 +380,26 @@ class IslandWindow(
                     fontSettings = currentAppSettings.fontSettings,
                     darkTheme = darkTheme
                 ) {
-                    IslandContent(
+                    if (usesBanner) {
+                        BannerContent(
+                            name = name,
+                            type = type,
+                            batteryLevel = batteryLevel,
+                            batteries = batteries,
+                            reversed = reversed,
+                            otherDeviceName = otherDeviceName,
+                            islandState = islandState,
+                            openApp = {
+                                openApp()
+                                close()
+                            },
+                            requestClose = { close() },
+                            onClosed = { cleanupAndRemoveView() },
+                            // Stays while it's being dragged.
+                            holdOpen = { hold -> if (hold) cancelTimer() else resetTimer() },
+                            monochromeIconRes = this@IslandWindow.monochromeIconRes,
+                        )
+                    } else IslandContent(
                         name = name,
                         type = type,
                         batteryLevel = batteryLevel,
@@ -379,6 +434,10 @@ class IslandWindow(
                 }
             }
         }
+    }
+
+    private fun cancelTimer() {
+        autoCloseRunnable?.let { autoCloseHandler?.removeCallbacks(it) }
     }
 
     private fun resetTimer() {
