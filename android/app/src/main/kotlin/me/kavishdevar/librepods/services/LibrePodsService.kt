@@ -21,6 +21,10 @@ import android.bluetooth.le.ScanCallback
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -105,6 +109,10 @@ private const val DEBUG_SENSORS = "me.kavishdevar.librepods.DEBUG_SENSORS"
 // Sets or lifts the disconnect hold without connecting:
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HOLD --ez on false -p me.kavishdevar.librepods.dev2
 private const val DEBUG_HOLD = "me.kavishdevar.librepods.DEBUG_HOLD"
+// Roadmap #7: logs every head-tracker sensor Android has (Pixel Buds Pro 2 register one while
+// connected) and what one sends for a while:
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HEAD_TRACKER --ei seconds 20 -p me.kavishdevar.librepods.dev2
+private const val DEBUG_HEAD_TRACKER = "me.kavishdevar.librepods.DEBUG_HEAD_TRACKER"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -291,6 +299,36 @@ class LibrePodsService: Service() {
     // e.g. adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SENSORS --es op descriptors -p me.kavishdevar.librepods.dev2
     private var sensorSweepJob: Job? = null
 
+    private fun debugHeadTracker(seconds: Int) {
+        val tag = "HeadTrackerProbe"
+        val sensorManager = getSystemService(SensorManager::class.java)
+        val trackers = (sensorManager.getDynamicSensorList(Sensor.TYPE_HEAD_TRACKER) +
+            sensorManager.getSensorList(Sensor.TYPE_HEAD_TRACKER)).distinctBy { it.id to it.name }
+        Log.i(tag, "head trackers: " + trackers.joinToString { "${it.name} (${it.vendor}, id ${it.id}, delay ${it.minDelay}..${it.maxDelay} us, dynamic ${it.isDynamicSensor})" })
+        val tracker = trackers.firstOrNull() ?: return
+        var count = 0
+        var first = 0L
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                if (count == 0) first = event.timestamp
+                count++
+                // values: rotation vector (x, y, z, radians, axis-angle), angular velocity (x, y, z,
+                // rad/s), discontinuity count
+                Log.i(tag, "#$count t=${(event.timestamp - first) / 1_000_000}ms " + event.values.joinToString(" ") { "%.4f".format(it) })
+            }
+            override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+                Log.i(tag, "accuracy $accuracy")
+            }
+        }
+        val registered = sensorManager.registerListener(listener, tracker, SensorManager.SENSOR_DELAY_GAME)
+        Log.i(tag, "listening to ${tracker.name}: $registered")
+        serviceCoroutineScope.launch {
+            delay(seconds.seconds)
+            sensorManager.unregisterListener(listener)
+            Log.i(tag, "stopped after $count events in $seconds s")
+        }
+    }
+
     private fun debugSensors(intent: Intent) {
         val device = _devices.value.values.filterIsInstance<AppleDevice>()
             .firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
@@ -371,6 +409,10 @@ class LibrePodsService: Service() {
             }
             if (intent.action == DEBUG_SENSORS) {
                 debugSensors(intent)
+                return
+            }
+            if (intent.action == DEBUG_HEAD_TRACKER) {
+                debugHeadTracker(intent.getIntExtra("seconds", 20))
                 return
             }
             val device = _devices.value.values.filterIsInstance<AppleDevice>().firstOrNull() ?: return
@@ -613,6 +655,7 @@ class LibrePodsService: Service() {
             registerReceiver(debugReceiver, IntentFilter().apply {
                 addAction(DEBUG_SHOW_ISLAND)
                 addAction(DEBUG_HOLD)
+                addAction(DEBUG_HEAD_TRACKER)
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)
