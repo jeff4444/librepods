@@ -41,6 +41,10 @@ import android.util.Log
  * these buds for certain; a burst (3 within 1.5 s) that's close (-55 dBm or stronger) and carries
  * the Find My Device frame counts as this pair's lid opening, and the burst ending as it closing.
  * Scans only while asked to (screen on, buds bonded and not connected), at low latency.
+ *
+ * The case keeps broadcasting fast for a while (about 20 s, measured) after the buds go back in,
+ * lid open or closed, which looked like the lid opening. So when watching starts right after the
+ * buds went in, a burst only counts once the broadcasts have slowed for [CLOSED_AFTER_MS] first.
  */
 class PixelBudsLidWatcher(
     private val context: Context,
@@ -62,6 +66,20 @@ class PixelBudsLidWatcher(
     private var scanning = false
     private var open = false
     private var lastBurstAt = 0L
+    // False while waiting for the case to quiet down after the buds went back in.
+    private var armed = true
+
+    private val armCheck = object : Runnable {
+        override fun run() {
+            if (armed || !scanning) return
+            if (SystemClock.elapsedRealtime() - lastBurstAt >= CLOSED_AFTER_MS) {
+                armed = true
+                Log.i(TAG, "the case has quieted down; watching for the lid opening")
+            } else {
+                handler.postDelayed(this, 500)
+            }
+        }
+    }
 
     private val closeCheck = object : Runnable {
         override fun run() {
@@ -85,8 +103,10 @@ class PixelBudsLidWatcher(
         }
     }
 
+    /** [waitForQuiet]: the buds just went into the case; ignore its broadcasts until they slow down. */
     @SuppressLint("MissingPermission")
-    fun setActive(active: Boolean) {
+    fun setActive(active: Boolean, waitForQuiet: Boolean = false) {
+        if (active && waitForQuiet && armed) disarm()
         if (active == scanning) return
         val scanner = context.getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
         if (active) {
@@ -104,6 +124,8 @@ class PixelBudsLidWatcher(
             runCatching { scanner.stopScan(callback) }
             scanning = false
             recent.clear()
+            handler.removeCallbacks(armCheck)
+            armed = true
             if (open) {
                 open = false
                 handler.removeCallbacks(closeCheck)
@@ -111,6 +133,14 @@ class PixelBudsLidWatcher(
             }
             Log.i(TAG, "stopped watching for the case lid")
         }
+    }
+
+    private fun disarm() {
+        armed = false
+        lastBurstAt = SystemClock.elapsedRealtime()
+        handler.removeCallbacks(armCheck)
+        handler.postDelayed(armCheck, 500)
+        Log.i(TAG, "the buds just went into the case; waiting for its broadcasts to slow down")
     }
 
     private fun onResult(result: ScanResult) {
@@ -123,6 +153,7 @@ class PixelBudsLidWatcher(
         while (times.isNotEmpty() && now - times.first() > BURST_WINDOW_MS) times.removeFirst()
         if (times.size < BURST) return
         lastBurstAt = now
+        if (!armed) return
         if (!open) {
             open = true
             Log.i(TAG, "lid open: ${times.size} broadcasts in ${BURST_WINDOW_MS} ms at ${result.rssi} dBm")

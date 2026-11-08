@@ -498,7 +498,9 @@ class LibrePodsService: Service() {
         val buds = _devices.value.values.filterIsInstance<PixelBudsDevice>()
         val wanted = screenOn && buds.isNotEmpty() &&
             buds.none { it.connectionState.value == ConnectionState.CONNECTED || isAclConnected(it.bluetoothDevice) }
-        pixelBudsLidWatcher.setActive(wanted)
+        // Just disconnected: they went back into the case, which then broadcasts like an open lid.
+        val justPutAway = buds.any { System.currentTimeMillis() - it.state.value.lastDisconnected < 10_000 }
+        pixelBudsLidWatcher.setActive(wanted, waitForQuiet = justPutAway)
     }
 
     private val healthConnectHeartRateWriter by lazy {
