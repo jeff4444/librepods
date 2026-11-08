@@ -124,9 +124,18 @@ and sends read-only calls.
 ## Open questions
 
 1. ~~Can LibrePods open the Maestro RFCOMM channel while Google's app holds it?~~ No; see above.
-   Options: go through Google's app (question 2), keep Google's app off the channel on phones
-   where LibrePods runs the buds, or take the channel only while Google's app isn't using it.
-2. Does `MaestroEndpointService` accept calls from another app?
+   Google's app holds the channel whenever the buds are connected, and an ordinary app can't make
+   it let go (force-stopping needs adb). So on a phone where LibrePods runs the buds over Maestro,
+   Google's app has to be off the channel: disabled (`adb shell pm disable-user --user 0
+   com.google.android.apps.wearables.maestro.companion`, undone with `pm enable`), at the cost of
+   its firmware updates and settings until it's re-enabled. What still works alongside Google's
+   app: the buds' BLE broadcasts (Fast Pair adverts carry battery), Android's own battery level,
+   and anything on a phone where Google's app isn't connected to the buds.
+2. ~~Does `MaestroEndpointService` accept calls from another app?~~ No. It is a gRPC-over-Binder
+   server whose security policy is set per service: "internal-only" (the caller must run as
+   Google's app) or a "1st-party only Allowlist" that also requires the caller to be signed by
+   Google (it rejects others with "Not google-signed"; `com.google.android.apps.pixel.dcservice`
+   is one allowlisted package). LibrePods can't pass either without root.
 3. ~~Is the head tracker a sensor ordinary apps can read (roadmap #7)?~~ Not directly. While the
    buds are connected, `dumpsys sensorservice` lists "Jeff's Pixel Buds Pro 2", vendor
    "Bluetooth 00e0:00e0", type `android.sensor.head_tracker` (37), dynamic, continuous 10 to
