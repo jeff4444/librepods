@@ -11,6 +11,9 @@ import android.appwidget.AppWidgetManager
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
@@ -239,9 +242,12 @@ class LibrePodsService: Service() {
     // decrypted with the AirPods' encryption key, to see which bytes change when the case is
     // shaken, tilted, opened or its button pressed. Logs "CaseWatch" lines. The scan delivers each
     // advert as it arrives, unlike the batched scan the app normally runs.
-    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 [--ez any true] -p me.kavishdevar.librepods.dev2
+    //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_WATCH_CASE --ei seconds 150 [--ez any true] [--ez connect true] -p me.kavishdevar.librepods.dev2
+    // With "connect", the first case advert is also connected to over BLE (if it's connectable):
+    // every service and characteristic is listed and the readable ones read, then it disconnects.
+    // Nothing is written to the case.
     @SuppressLint("MissingPermission")
-    private fun debugWatchCase(seconds: Int, anyApple: Boolean = false) {
+    private fun debugWatchCase(seconds: Int, anyApple: Boolean = false, connect: Boolean = false) {
         val scanner = getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeScanner ?: return
         fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
         fun decrypt(block: ByteArray): String = encKeyMap.values.joinToString(",") { key ->
@@ -253,6 +259,7 @@ class LibrePodsService: Service() {
                 "?"
             }
         }
+        var triedConnect = false
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val data = result.scanRecord?.getManufacturerSpecificData(0x004C) ?: return
@@ -267,8 +274,12 @@ class LibrePodsService: Service() {
                 val block = if (kind == "case") data.copyOfRange(3, 19) else data.copyOfRange(data.size - 16, data.size)
                 Log.i(
                     "CaseWatch",
-                    "$kind ${result.device.address} rssi=${result.rssi} raw=${hex(data)} plain=${decrypt(block)}"
+                    "$kind ${result.device.address} rssi=${result.rssi} conn=${result.isConnectable} raw=${hex(data)} plain=${decrypt(block)}"
                 )
+                if (connect && kind == "case" && !triedConnect) {
+                    triedConnect = true
+                    debugConnectCase(result)
+                }
             }
         }
         // With "any", match every Apple advert and pick ours out in the callback: some Bluetooth
@@ -415,10 +426,60 @@ class LibrePodsService: Service() {
         }
     }
 
+    /** Roadmap #6: what a BLE connection to the case offers. Logs "CaseWatch" lines; reads only. */
+    @SuppressLint("MissingPermission")
+    private fun debugConnectCase(result: ScanResult) {
+        fun hex(bytes: ByteArray?) = bytes?.joinToString("") { "%02x".format(it) } ?: "null"
+        if (!result.isConnectable) {
+            Log.i("CaseWatch", "the case advert isn't connectable (advertised as non-connectable); not trying")
+            return
+        }
+        Log.i("CaseWatch", "connecting to the case at ${result.device.address} over BLE")
+        val toRead = ArrayDeque<BluetoothGattCharacteristic>()
+        result.device.connectGatt(this, false, object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                Log.i("CaseWatch", "GATT state $newState (status $status)")
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> gatt.discoverServices()
+                    BluetoothProfile.STATE_DISCONNECTED -> gatt.close()
+                }
+            }
+
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                Log.i("CaseWatch", "services (status $status): ${gatt.services.size}")
+                for (service in gatt.services) {
+                    Log.i("CaseWatch", "service ${service.uuid} (${if (service.type == 0) "primary" else "secondary"})")
+                    for (c in service.characteristics) {
+                        Log.i("CaseWatch", "  characteristic ${c.uuid} properties 0x${"%02x".format(c.properties)} descriptors ${c.descriptors.map { it.uuid }}")
+                        if (c.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) toRead.addLast(c)
+                    }
+                }
+                readNext(gatt)
+            }
+
+            private fun readNext(gatt: BluetoothGatt) {
+                val next = toRead.removeFirstOrNull()
+                if (next == null) {
+                    Log.i("CaseWatch", "done reading; disconnecting")
+                    gatt.disconnect()
+                    return
+                }
+                if (!gatt.readCharacteristic(next)) readNext(gatt)
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onCharacteristicRead(gatt: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+                val value = c.value
+                Log.i("CaseWatch", "  read ${c.uuid} (status $status): ${hex(value)} \"${value?.toString(Charsets.UTF_8)?.filter { it.isLetterOrDigit() || it in " .-_" }}\"")
+                readNext(gatt)
+            }
+        }, BluetoothDevice.TRANSPORT_LE)
+    }
+
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == DEBUG_WATCH_CASE) {
-                debugWatchCase(intent.getIntExtra("seconds", 60), intent.getBooleanExtra("any", false))
+                debugWatchCase(intent.getIntExtra("seconds", 60), intent.getBooleanExtra("any", false), intent.getBooleanExtra("connect", false))
                 return
             }
             if (intent.action == DEBUG_SENSORS) {
