@@ -141,7 +141,7 @@ class AppleViewModel(
         )
     )
 
-    fun disconnect() = device.disconnect()
+    fun disconnect() = device.disconnectByUser()
     fun recordings(): List<Recording> = recordingRepository.recordings()
 
     fun setControlCommand(identifier: ControlCommandIdentifier, value: ByteArray): Boolean =

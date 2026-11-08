@@ -38,6 +38,10 @@ data class AppleSettings(
 
     val alwaysConnectWhenAccessoryDisconnected: Boolean = true,
 
+    // Set when the user disconnects these AirPods in LibrePods, cleared when they connect them
+    // there again; see Device.heldDisconnected.
+    val stayDisconnected: Boolean = false,
+
     val connectOnPhoneWhenAccessoryDisconnected: Boolean = true,
     val connectOnPhoneWhenAccessoryIdle: Boolean = true,
     val connectOnPhoneWhenAccessoryMusic: Boolean = true,

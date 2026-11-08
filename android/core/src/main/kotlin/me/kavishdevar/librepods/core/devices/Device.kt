@@ -46,6 +46,19 @@ sealed interface Device<S: DeviceState, T: DeviceSettings, M: DeviceMetadata> {
 
     fun disconnect()
 
+    /**
+     * True from the moment the user disconnects this device in LibrePods until they connect it
+     * there again. Nothing reconnects it automatically in between, and a connection started from
+     * elsewhere (the device itself, Android) is turned away.
+     */
+    val heldDisconnected: Boolean
+
+    /** A disconnect the user asked for: holds the device off until [connectByUser]. */
+    fun disconnectByUser()
+
+    /** A connect the user asked for: lifts the hold set by [disconnectByUser]. */
+    fun connectByUser(): Boolean
+
     fun createSocket(uuid: ParcelUuid, psm: Int) = createBluetoothSocket(
         adapter = bluetoothAdapter,
         device = bluetoothDevice,

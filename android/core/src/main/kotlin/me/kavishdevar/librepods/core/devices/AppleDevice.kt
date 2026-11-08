@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -153,10 +154,8 @@ class AppleDevice(
                 name = bluetoothDevice.alias ?: bluetoothDevice.name ?: "Unknown"
             )
         }
-
-        if (currentState == ConnectionState.AVAILABLE) {
-            connect()
-        }
+        // The service connects once the saved settings are loaded, since they say whether the user
+        // disconnected these AirPods (stayDisconnected).
     }
 
     override fun connect(): Boolean {
@@ -186,6 +185,47 @@ class AppleDevice(
         return success
     }
 
+    override val heldDisconnected: Boolean
+        get() = _settings.value.stayDisconnected
+
+    // When LibrePods last took the audio down itself (elapsedRealtime), so the service can tell
+    // those disconnects from Android's own.
+    @Volatile var audioDisconnectedByUsAt = 0L
+        private set
+
+    override fun disconnectAudio() {
+        audioDisconnectedByUsAt = SystemClock.elapsedRealtime()
+        super.disconnectAudio()
+    }
+
+    override fun disconnectByUser() {
+        Log.i(TAG, "disconnected by the user; holding off reconnecting until they connect again")
+        _settings.update { it.copy(stayDisconnected = true) }
+        // bluetoothDevice.disconnect() in disconnect() is refused without a companion device
+        // association, so take the audio down here; with the control link closed too, nothing
+        // holds the connection open and it drops.
+        disconnectAudio()
+        disconnect()
+    }
+
+    override fun connectByUser(): Boolean {
+        if (_settings.value.stayDisconnected) Log.i(TAG, "connect asked for by the user, lifting the hold")
+        _settings.update { it.copy(stayDisconnected = false) }
+        val connected = connect()
+        // A disconnect takes the audio down too (bluetoothDevice.disconnect below), so ask Android
+        // to bring the audio back with the control link.
+        if (connected && Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
+            try {
+                bluetoothDevice.connect()
+            } catch (e: Exception) {
+                // Refused without a companion device association; the AirPods bring the audio up
+                // themselves once the control link connects.
+                Log.w(TAG, "couldn't connect the audio through Android: ${e.message}")
+            }
+        }
+        return connected
+    }
+
     override fun disconnect() {
         _state.update {
             it.copy(
@@ -203,7 +243,7 @@ class AppleDevice(
             try {
                 bluetoothDevice.disconnect()
             } catch (e: Exception) {
-                Log.e(TAG, "couldn't disconnect bluetooth device", e)
+                Log.w(TAG, "couldn't disconnect bluetooth device: ${e.message}")
             }
         }
 

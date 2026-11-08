@@ -8,7 +8,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
+import android.bluetooth.BluetoothA2dp
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothHeadset
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanSettings
 import android.bluetooth.le.ScanResult
@@ -27,6 +31,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.telecom.VideoProfile
@@ -372,7 +377,7 @@ class LibrePodsService: Service() {
                     name = displayName(device),
                     batteries = device.state.value.battery,
                     spec = AirPodsSpecs.getSpec(device.metadata.value.model),
-                    onConnect = { device.connect() },
+                    onConnect = { device.connectByUser() },
                     airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                 )
             }
@@ -544,6 +549,10 @@ class LibrePodsService: Service() {
         for ((device, accessoryState) in candidates) {
             val settings = device.settings.value
 
+            if (device.heldDisconnected) {
+                Log.d(TAG, "Not connecting ${device.macAddress.toRedactedString()} for $trigger: the user disconnected it")
+                continue
+            }
             if (device is AppleDevice && budsInCase(device.state.value)) {
                 Log.d(TAG, "Not connecting ${device.macAddress.toRedactedString()} for $trigger: both buds are in the case")
                 continue
@@ -631,7 +640,7 @@ class LibrePodsService: Service() {
                 LibrePodsIntents.ACTION_CONNECT -> {
                     val macAddress = intent.getStringExtra(LibrePodsIntents.Extras.MAC_ADDRESS)?.let { MacAddress(it) }
                     val device = devices.value[macAddress]
-                    device?.connect()
+                    device?.connectByUser()
                 }
                 LibrePodsIntents.ACTION_SET_ANC_MODE -> {
                     val appWidgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
@@ -679,12 +688,17 @@ class LibrePodsService: Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     private fun onDeviceConnected(bluetoothDevice: BluetoothDevice) {
-        if (devices.value[MacAddress(bluetoothDevice.address)]?.connectionState?.value == ConnectionState.CONNECTED) {
-            Log.d(TAG, "Device already connected: ${bluetoothDevice.address}")
+        val known = devices.value[MacAddress(bluetoothDevice.address)]
+        if (known?.connectionState?.value == ConnectionState.CONNECTED || known?.connectionState?.value == ConnectionState.CONNECTING) {
+            Log.d(TAG, "Device already connected or connecting: ${bluetoothDevice.address.redactMac()}")
+            return
+        }
+        if (known?.heldDisconnected == true) {
+            turnAway(known, "it connected on its own")
             return
         }
 
-        val device = devices.value[MacAddress(bluetoothDevice.address)] ?: createDevice(bluetoothDevice)
+        val device = known ?: createDevice(bluetoothDevice, connectIfUp = false)
 
         if (device == null) {
             Log.d(TAG, "Unsupported device connected: ${bluetoothDevice.address}")
@@ -741,6 +755,39 @@ class LibrePodsService: Service() {
         _devices.update { it + (device.macAddress to device) }
     }
 
+    /** Disconnects a device the user disconnected in LibrePods that came back some other way. */
+    private fun turnAway(device: Device<*, *, *>, why: String) {
+        Log.i(TAG, "turning away ${device.macAddress.toRedactedString()} ($why): the user disconnected it")
+        device.disconnectAudio()
+        device.disconnect()
+        updateDeviceNotification(device = device)
+    }
+
+    /**
+     * Android's own Disconnect (Bluetooth settings, the quick settings panel) takes only the audio
+     * down. LibrePods' control link keeps the AirPods attached, and the audio comes straight back,
+     * so the AirPods never disconnect. A disconnect the phone starts shows as DISCONNECTING; when
+     * one starts and LibrePods didn't ask for it, finish it as a user disconnect.
+     */
+    private fun onAudioDisconnecting(mac: MacAddress, profile: String) {
+        val device = devices.value[mac] as? AppleDevice ?: return
+        if (device.heldDisconnected || device.connectionState.value != ConnectionState.CONNECTED) return
+        if (SystemClock.elapsedRealtime() - device.audioDisconnectedByUsAt < 5_000) return
+        // Turning Bluetooth off disconnects everything; that isn't a disconnect of these AirPods.
+        if (getSystemService(BluetoothManager::class.java)?.adapter?.state != BluetoothAdapter.STATE_ON) return
+        Log.i(TAG, "Android is disconnecting $profile from ${mac.toRedactedString()}, not LibrePods: treating it as the user disconnecting")
+        device.disconnectByUser()
+        updateDeviceNotification(device = device)
+    }
+
+    private fun profileStateName(state: Int) = when (state) {
+        BluetoothProfile.STATE_DISCONNECTED -> "disconnected"
+        BluetoothProfile.STATE_CONNECTING -> "connecting"
+        BluetoothProfile.STATE_CONNECTED -> "connected"
+        BluetoothProfile.STATE_DISCONNECTING -> "disconnecting"
+        else -> "$state"
+    }
+
     private fun onDeviceDisconnected(mac: MacAddress) {
         Log.i(TAG, "Device disconnected: $mac")
         val device = devices.value[mac]?: return
@@ -794,6 +841,27 @@ class LibrePodsService: Service() {
                     )
 
                     BluetoothDevice.ACTION_UUID -> onDeviceConnected(bluetoothDevice)
+
+                    BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED ->
+                        Log.i(TAG, "disconnect requested for ${bluetoothDevice.address.redactMac()}")
+
+                    BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
+                    BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
+                        val profile = if (action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) "A2DP" else "HFP"
+                        val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
+                        val previous = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
+                        val mac = MacAddress(bluetoothDevice.address)
+                        Log.i(TAG, "$profile ${profileStateName(previous)} -> ${profileStateName(state)} for ${mac.toRedactedString()}")
+                        val device = devices.value[mac]
+                        when {
+                            state == BluetoothProfile.STATE_DISCONNECTING -> onAudioDisconnecting(mac, profile)
+                            // Android or the AirPods brought the audio back over a connection
+                            // that never dropped, so no ACL_CONNECTED came to turn it away.
+                            device?.heldDisconnected == true &&
+                                (state == BluetoothProfile.STATE_CONNECTING || state == BluetoothProfile.STATE_CONNECTED) ->
+                                turnAway(device, "$profile came back")
+                        }
+                    }
                 }
             }
         }
@@ -804,6 +872,9 @@ class LibrePodsService: Service() {
             addAction("android.bluetooth.device.action.ACL_CONNECTED")
             addAction("android.bluetooth.device.action.ACL_DISCONNECTED")
             addAction("android.bluetooth.device.action.UUID")
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED)
+            addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+            addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
         }
 
         registerReceiver(bluetoothReceiver, intentFilter, RECEIVER_EXPORTED)
@@ -813,8 +884,13 @@ class LibrePodsService: Service() {
         unregisterReceiver(bluetoothReceiver)
     }
 
+    /**
+     * With [connectIfUp], connects the device once its saved settings are loaded if Android already
+     * has it connected (or turns it away if the user disconnected it in LibrePods).
+     */
     private fun createDevice(
-        bluetoothDevice: BluetoothDevice
+        bluetoothDevice: BluetoothDevice,
+        connectIfUp: Boolean = true
     ): Device<*, *, *>? {
 
         val aacpUuid = ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
@@ -892,6 +968,11 @@ class LibrePodsService: Service() {
                 observeAppleMetadata(device)
                 observeAppleMicrophoneFrames(device)
                 observeAppleEvents(device)
+
+                if (connectIfUp && isConnectedMethod.invoke(bluetoothDevice) as Boolean) {
+                    if (device.heldDisconnected) turnAway(device, "it was connected when LibrePods started")
+                    else device.connect()
+                }
             }
         }
 
@@ -945,7 +1026,9 @@ class LibrePodsService: Service() {
                         is AppleDevice -> {
                             val settings = device.settings.value
                             val state = device.state.value
-                            if (settings.alwaysConnectWhenAccessoryDisconnected && System.currentTimeMillis() - state.lastDisconnected > 5_000) {
+                            if (device.heldDisconnected) {
+                                Log.i(TAG, "device ${device.macAddress.toRedactedString()} is nearby, not connecting: the user disconnected it")
+                            } else if (settings.alwaysConnectWhenAccessoryDisconnected && System.currentTimeMillis() - state.lastDisconnected > 5_000) {
                                 if (budsInCase(state)) {
                                     // Like an iPhone: wait for a bud to come out (handled where the
                                     // ear state changes) rather than route audio to the case.
@@ -1023,7 +1106,7 @@ class LibrePodsService: Service() {
                                     batteries = state.battery,
                                     spec = AirPodsSpecs.getSpec(device.metadata.value.model),
                                     onConnect = {
-                                        device.connect()
+                                        device.connectByUser()
                                     },
                                     airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                                 )
@@ -1034,7 +1117,7 @@ class LibrePodsService: Service() {
                                 batteries = state.battery,
                                 spec = AirPodsSpecs.getSpec(device.metadata.value.model),
                                 onConnect = {
-                                    device.connect()
+                                    device.connectByUser()
                                 },
                                 airPodsConnected = device.connectionState.value == ConnectionState.CONNECTED
                             )
@@ -1073,6 +1156,7 @@ class LibrePodsService: Service() {
                         }
                     } else if (
                         deviceSettings.alwaysConnectWhenAccessoryDisconnected &&
+                        !device.heldDisconnected &&
                         device.connectionState.value == ConnectionState.AVAILABLE &&
                         budsInCase(previousState) && !budsInCase(state)
                     ) {

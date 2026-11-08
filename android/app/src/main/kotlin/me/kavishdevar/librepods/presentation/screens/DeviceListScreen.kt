@@ -374,8 +374,11 @@ fun DeviceListScreen(
                                             onTap = {
                                                 CoroutineScope(Dispatchers.IO).launch {
                                                     when (connectionState) {
-                                                        ConnectionState.CONNECTED -> device.disconnect()
-                                                        ConnectionState.AVAILABLE -> device.connect()
+                                                        // Disconnecting here holds the device off
+                                                        // until it's connected here again.
+                                                        ConnectionState.CONNECTED -> device.disconnectByUser()
+                                                        ConnectionState.AVAILABLE,
+                                                        ConnectionState.DISCONNECTED -> device.connectByUser()
                                                         else -> {}
                                                     }
                                                 }
