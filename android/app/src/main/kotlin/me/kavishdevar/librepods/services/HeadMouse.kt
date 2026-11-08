@@ -135,23 +135,16 @@ class HeadMouseController(
 
             lastTimestamp = null
             lastSampleAt = SystemClock.elapsedRealtime()
-            device.setMotionStream(STREAM_INTERVAL)
-            // Each bud has its own (mirrored) head-to-headphone transform, and the AirPods don't
-            // always send their descriptors on connecting: ask, so the transform matches the bud
-            // that streams.
-            device.aacp.requestSensorDescriptors()
             jobs = listOf(
                 scope.launch { device.motionSamples.collect { onSample(it) } },
-                // The stream stops when the bud carrying it leaves an ear (roadmap #8); restart it.
                 scope.launch {
+                    startStream(device)
+                    // The stream stops when the bud carrying it leaves an ear (roadmap #8); restart it.
                     while (isActive) {
                         delay(1_000)
-                        if (SystemClock.elapsedRealtime() - lastSampleAt > 1_500) {
+                        if (SystemClock.elapsedRealtime() - lastSampleAt > 2_500) {
                             Log.i(TAG, "no motion for a while, restarting the stream")
-                            device.setMotionStream(STREAM_INTERVAL)
-                            // A stalled stream usually means the other bud now carries it.
-                            device.aacp.requestSensorDescriptors()
-                            lastSampleAt = SystemClock.elapsedRealtime()
+                            startStream(device)
                         }
                     }
                 },
@@ -161,6 +154,19 @@ class HeadMouseController(
             Log.i(TAG, "started, screen ${width}x$height, transform ${device.headToHeadphone.value}")
             onRunningChanged(device)
         }
+    }
+
+    /**
+     * Each bud has its own (mirrored) head-to-headphone transform, and the AirPods don't always send
+     * their descriptors on connecting, so ask for them first; a stalled stream usually means the
+     * other bud now carries it. Asking resets the AirPods' sensor streams, so the stream starts
+     * only after the answer has had time to arrive.
+     */
+    private suspend fun startStream(device: AppleDevice) {
+        device.aacp.requestSensorDescriptors()
+        delay(600)
+        device.setMotionStream(STREAM_INTERVAL)
+        lastSampleAt = SystemClock.elapsedRealtime()
     }
 
     fun stop() {
