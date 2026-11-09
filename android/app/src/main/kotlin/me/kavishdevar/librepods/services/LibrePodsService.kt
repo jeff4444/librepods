@@ -857,6 +857,10 @@ class LibrePodsService: Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // The spatial player (roadmap #16) follows the head of whichever AirPods are connected.
+        me.kavishdevar.librepods.spatial.SpatialPlayer.findAirPods = {
+            devices.value.values.filterIsInstance<AppleDevice>().firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+        }
 
         observeAppSettings()
 

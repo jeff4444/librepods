@@ -103,10 +103,7 @@ class HeadMouseController(
     @Volatile private var mode = Mode.POINT
 
     // Which of the two mirrored transforms fits the streaming bud, scored against gravity.
-    private var uprightDirect = 0f
-    private var uprightMirror = 0f
-    private var useMirror = false
-    private var scoredFor: Quaternion? = null
+    private val headFrame = HeadFrame(TAG)
 
     // Scroll mode: head pitch since entering it, radians (positive = looking up).
     private var scrollPitch = 0f
@@ -269,33 +266,7 @@ class HeadMouseController(
         }
     }
 
-    /**
-     * The buds' transforms are mirror images (y and z negated), and the descriptor the AirPods send
-     * isn't always from the bud that streams motion. The right one keeps the head's up axis
-     * vertical against gravity while the head is upright (|dot| about 0.98 against 0.23 for the
-     * wrong one on a test pair), so score both on every sample and use the better.
-     */
-    private fun transformFor(device: AppleDevice, sample: MotionSample): Quaternion {
-        val direct = device.headToHeadphone.value ?: DEFAULT_HEAD_TO_HEADPHONE
-        val mirror = Quaternion(direct.w, direct.x, -direct.y, -direct.z)
-        if (direct != scoredFor) {
-            scoredFor = direct
-            uprightDirect = 0f
-            uprightMirror = 0f
-        }
-        fun upright(t: Quaternion): Float {
-            val upInBud = t.conjugate().rotate(UP)
-            return abs(sample.orientation.rotate(upInBud)[2])
-        }
-        uprightDirect += (upright(direct) - uprightDirect) * 0.05f
-        uprightMirror += (upright(mirror) - uprightMirror) * 0.05f
-        val mirrorBetter = if (useMirror) uprightMirror > uprightDirect - 0.1f else uprightMirror > uprightDirect + 0.1f
-        if (mirrorBetter != useMirror) {
-            useMirror = mirrorBetter
-            Log.i(TAG, "using the ${if (useMirror) "mirrored" else "sent"} head transform (upright ${"%.2f".format(uprightDirect)} vs ${"%.2f".format(uprightMirror)})")
-        }
-        return if (useMirror) mirror else direct
-    }
+    private fun transformFor(device: AppleDevice, sample: MotionSample): Quaternion = headFrame.transformFor(device, sample)
 
     private fun point(rate: FloatArray, dt: Float, speed: Float) {
         // Pixels per radian of head turn: about 40 degrees sweeps the screen's width at speed 1.
@@ -496,7 +467,6 @@ class HeadMouseController(
 
     private companion object {
         val STREAM_INTERVAL = 20.milliseconds
-        val UP = floatArrayOf(0f, 0f, 1f)
         const val SEGMENT_MS = 40L
 
         // Below this rotation rate (rad/s, about 1.4 deg/s) the head counts as still.
@@ -508,9 +478,5 @@ class HeadMouseController(
         const val SCROLL_DEAD_ZONE = 0.07f
         const val SCROLL_GAIN = 2.2f
         const val EDGE_MARGIN = 150f
-
-        // The left bud of one pair of AirPods Pro 3 (the right bud's is mirrored: y and z negated),
-        // used only for the moment before the AirPods answer the descriptor request.
-        val DEFAULT_HEAD_TO_HEADPHONE = Quaternion(w = 0.396f, x = 0.6312f, y = 0.1628f, z = 0.6466f)
     }
 }

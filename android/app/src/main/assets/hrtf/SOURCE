@@ -1,0 +1,3 @@
+From Resonance Audio (Google, Apache 2.0): third_party/SADIE_hrtf_database/WAV/Subject_002/SH,
+https://github.com/resonance-audio/resonance-audio. SADIE HRTF database, subject 002 (KU100 dummy head).
+Used by the spatial player (roadmap #16).
