@@ -108,6 +108,9 @@ class AACPManager(private val device: AppleDevice) {
         }
     }
 
+    // One at a time: the service connects on start-up and on the Bluetooth connection event, and two
+    // at once opened two sockets, both read (every message handled twice), the second sending.
+    @Synchronized
     fun connect(): Boolean {
         if (socket != null && socket!!.isConnected) {
             Log.i(TAG, "Already connected")
