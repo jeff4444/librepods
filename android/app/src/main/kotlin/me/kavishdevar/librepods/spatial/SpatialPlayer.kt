@@ -78,8 +78,11 @@ object SpatialPlayer {
         val pitchDeg: Float = 0f,
         val spreadDeg: Float = 30f,
         val lookaheadMs: Int = 120,
-        /** How much of the virtual room (reflections and reverb) to hear, 0..1. */
-        val room: Float = 0.4f,
+        /**
+         * How much of the virtual room (reflections and reverb) to hear, 0..1 of [ROOM_MAX]: more
+         * than that sounded unnatural in listening tests (8 Nov 2026), so the slider stops there.
+         */
+        val room: Float = 0.8f,
         val positionMs: Long = 0,
         val durationMs: Long = 0,
         val error: String? = null,
@@ -452,9 +455,10 @@ object SpatialPlayer {
                     fifoLen -= block
                     outL.fill(0f); outR.fill(0f)
                     renderer!!.process(inL, inR, block, dirs, outL, outR)
-                    room!!.process(inL, inR, block, headYaw, headPitch, s.spreadDeg, s.room, outL, outR)
+                    val roomAmount = s.room * ROOM_MAX
+                    room!!.process(inL, inR, block, headYaw, headPitch, s.spreadDeg, roomAmount, outL, outR)
                     // The room adds energy; trim so loud songs don't clip.
-                    val gain = GAIN / (1f + 0.6f * s.room)
+                    val gain = GAIN / (1f + 0.6f * roomAmount)
                     for (i in 0 until block) {
                         interleaved[2 * i] = (outL[i] * gain).coerceIn(-1f, 1f)
                         interleaved[2 * i + 1] = (outR[i] * gain).coerceIn(-1f, 1f)
@@ -489,4 +493,7 @@ object SpatialPlayer {
 
     // The two speakers summed through the HRIRs come out a little hotter than the original.
     private const val GAIN = 0.7f
+
+    // The room level at the slider's top: past this it stopped sounding like a real room.
+    private const val ROOM_MAX = 0.5f
 }

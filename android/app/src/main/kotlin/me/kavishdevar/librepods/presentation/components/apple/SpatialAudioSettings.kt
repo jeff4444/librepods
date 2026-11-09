@@ -94,7 +94,7 @@ fun SpatialAudioSettings(modifier: Modifier = Modifier) {
             value = s.room,
             onValueChange = { SpatialPlayer.setRoom(it) },
             valueRange = 0f..1f,
-            snapPoints = listOf(0f, 0.4f),
+            snapPoints = listOf(0f, 0.8f),
             independent = true,
             description = "Echoes from the walls of a living room and a short reverb, so the speakers sound out in the room. 0% is dry.",
         )
