@@ -43,9 +43,9 @@ import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.core.data.apple.MotionSample
 import me.kavishdevar.librepods.core.data.apple.Quaternion
 import me.kavishdevar.librepods.core.devices.AppleDevice
+import me.kavishdevar.librepods.spatial.MotionUsers
 import kotlin.math.abs
 import kotlin.math.sign
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 private const val TAG = "HeadMouse"
@@ -153,6 +153,7 @@ class HeadMouseController(
                 },
             )
             main.post(finger.pump)
+            MotionUsers.add(TAG)
             HeadMouse.running.value = true
             Log.i(TAG, "started, screen ${width}x$height, transform ${device.headToHeadphone.value}")
             onRunningChanged(device)
@@ -179,7 +180,7 @@ class HeadMouseController(
             main.removeCallbacks(finger.pump)
             jobs.forEach { it.cancel() }
             jobs = emptyList()
-            device.setMotionStream(Duration.ZERO)
+            MotionUsers.release(TAG, device)
             cursor?.let { view -> runCatching { windowManager?.removeView(view) } }
             cursor = null
             this.device = null

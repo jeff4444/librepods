@@ -77,6 +77,7 @@ import me.kavishdevar.librepods.presentation.components.apple.HearingHealthSetti
 import me.kavishdevar.librepods.presentation.components.apple.NoiseControlSettings
 import me.kavishdevar.librepods.presentation.components.apple.PressAndHoldSettings
 import me.kavishdevar.librepods.presentation.components.apple.SpatialAudioSettings
+import me.kavishdevar.librepods.presentation.components.apple.SystemSpatialAudioSettings
 import me.kavishdevar.librepods.presentation.components.apple.StemPressSettings
 import me.kavishdevar.librepods.core.data.StemPressType
 import me.kavishdevar.librepods.presentation.components.primitives.StyledButton
@@ -450,6 +451,12 @@ fun AppleSettingsScreen(
                 }
                 item(key = "spatial_audio") {
                     SpatialAudioSettings()
+                }
+                item(key = "spacer_system_spatial_audio") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                item(key = "system_spatial_audio") {
+                    SystemSpatialAudioSettings()
                 }
             }
 

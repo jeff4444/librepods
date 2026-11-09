@@ -21,3 +21,6 @@
 #-renamesourcefileattribute SourceFile
 
 -keep class me.kavishdevar.librepods.utils.KotlinModule { *; }
+
+# Roadmap #17: Shizuku starts this class by name in its own process.
+-keep class me.kavishdevar.librepods.spatial.system.HeadTrackerService { *; }

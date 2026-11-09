@@ -133,6 +133,8 @@ android {
         compose = true
         viewBinding = true
         buildConfig = true
+        // Roadmap #17: the Binder interface to the Shizuku-run head tracker service.
+        aidl = true
     }
     androidResources {
         generateLocaleConfig = true
@@ -198,6 +200,9 @@ dependencies {
     implementation(libs.androidx.room3.runtime)
     ksp(libs.androidx.room3.compiler)
     implementation(libs.kotlinx.serialization.cbor)
+    // Roadmap #17: runs the virtual head tracker with the shell's access to /dev/uhid.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
     implementation(libs.protobuf.kotlin)
 //    compileOnly(files("../../../framework-classes.jar"))
     implementation(libs.androidx.healthconnect.client)

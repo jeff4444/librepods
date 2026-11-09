@@ -170,6 +170,15 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Roadmap #17: receives Shizuku's Binder, for the system-wide head tracker. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <activity
             android:name=".presentation.activities.PrivacyPolicyActivity"
             android:exported="true">
@@ -192,5 +201,6 @@
     </application>
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="moe.shizuku.privileged.api" />
     </queries>
 </manifest>

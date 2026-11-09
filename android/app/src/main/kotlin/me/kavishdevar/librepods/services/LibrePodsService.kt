@@ -134,6 +134,9 @@ private const val DEBUG_PIXELBUDS = "me.kavishdevar.librepods.DEBUG_PIXELBUDS"
 // Pixel Buds: write one setting as a plain number (for trying the unnamed ones, or setup mode 6):
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_PIXELBUDS_SET --ei id 6 --ei value 1 -p me.kavishdevar.librepods.dev2
 private const val DEBUG_PIXELBUDS_SET = "me.kavishdevar.librepods.DEBUG_PIXELBUDS_SET"
+// System-wide head tracker (roadmap #17): negate rotation vector components, recentre, log state:
+//   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_SYSTEM_HEAD [--es flip xz] [--ez recentre true] -p me.kavishdevar.librepods.dev2
+private const val DEBUG_SYSTEM_HEAD = "me.kavishdevar.librepods.DEBUG_SYSTEM_HEAD"
 
 @SuppressLint("MissingPermission")
 class LibrePodsService: Service() {
@@ -567,6 +570,10 @@ class LibrePodsService: Service() {
                     intent.getBooleanExtra("connect", false), intent.getBooleanExtra("beep", false))
                 return
             }
+            if (intent.action == DEBUG_SYSTEM_HEAD) {
+                me.kavishdevar.librepods.spatial.system.SystemHeadTracker.debug(intent)
+                return
+            }
             if (intent.action == DEBUG_SENSORS) {
                 debugSensors(intent)
                 return
@@ -861,6 +868,10 @@ class LibrePodsService: Service() {
         me.kavishdevar.librepods.spatial.SpatialPlayer.findAirPods = {
             devices.value.values.filterIsInstance<AppleDevice>().firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
         }
+        // And Android's own spatializer can follow it, through a virtual head tracker (roadmap #17).
+        me.kavishdevar.librepods.spatial.system.SystemHeadTracker.init(this) {
+            devices.value.values.filterIsInstance<AppleDevice>().firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+        }
 
         observeAppSettings()
 
@@ -889,6 +900,7 @@ class LibrePodsService: Service() {
                 addAction(DEBUG_SHOW_CARD)
                 addAction(DEBUG_WATCH_CASE)
                 addAction(DEBUG_SENSORS)
+                addAction(DEBUG_SYSTEM_HEAD)
             }, Manifest.permission.DUMP, null, RECEIVER_EXPORTED)
         }
 
@@ -961,6 +973,7 @@ class LibrePodsService: Service() {
     override fun onDestroy() {
         healthConnectHeartRateWriter.flush()
         runCatching { pixelBudsLidWatcher.setActive(false) }
+        runCatching { me.kavishdevar.librepods.spatial.system.SystemHeadTracker.shutdown() }
         runCatching { unregisterReceiver(screenStateReceiver) }
         if (BuildConfig.DEBUG) runCatching { unregisterReceiver(debugReceiver) }
         unregisterBluetoothReceivers()
