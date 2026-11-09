@@ -90,6 +90,15 @@ fun SpatialAudioSettings(modifier: Modifier = Modifier) {
             independent = true,
         )
         StyledSlider(
+            label = "Room sound: ${(s.room * 100).roundToInt()}%",
+            value = s.room,
+            onValueChange = { SpatialPlayer.setRoom(it) },
+            valueRange = 0f..1f,
+            snapPoints = listOf(0f, 0.4f),
+            independent = true,
+            description = "Echoes from the walls of a living room and a short reverb, so the speakers sound out in the room. 0% is dry.",
+        )
+        StyledSlider(
             label = "Bluetooth delay compensation: ${s.lookaheadMs} ms",
             value = s.lookaheadMs.toFloat(),
             onValueChange = { SpatialPlayer.setLookahead(it.roundToInt()) },

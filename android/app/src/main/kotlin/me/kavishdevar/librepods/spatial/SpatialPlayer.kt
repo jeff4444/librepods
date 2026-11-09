@@ -78,6 +78,8 @@ object SpatialPlayer {
         val pitchDeg: Float = 0f,
         val spreadDeg: Float = 30f,
         val lookaheadMs: Int = 120,
+        /** How much of the virtual room (reflections and reverb) to hear, 0..1. */
+        val room: Float = 0.4f,
         val positionMs: Long = 0,
         val durationMs: Long = 0,
         val error: String? = null,
@@ -173,6 +175,8 @@ object SpatialPlayer {
     fun setSpread(deg: Float) { _state.value = _state.value.copy(spreadDeg = deg) }
 
     fun setLookahead(ms: Int) { _state.value = _state.value.copy(lookaheadMs = ms) }
+
+    fun setRoom(amount: Float) { _state.value = _state.value.copy(room = amount.coerceIn(0f, 1f)) }
 
     fun recentre() {
         headFrame.unlock()
@@ -342,6 +346,7 @@ object SpatialPlayer {
             var sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             var renderer: BinauralRenderer? = null
+            var room: Room? = null
             var block = 0
             // Decoded audio waiting to be rendered, deinterleaved.
             var fifoL = FloatArray(1 shl 16)
@@ -362,6 +367,7 @@ object SpatialPlayer {
 
             fun setup() {
                 renderer = BinauralRenderer(ShHrir.load(context, sampleRate))
+                room = Room(sampleRate)
                 block = sampleRate * BLOCK_MS / 1000
                 outL = FloatArray(block); outR = FloatArray(block); inL = FloatArray(block); inR = FloatArray(block)
                 interleaved = FloatArray(block * 2)
@@ -435,9 +441,10 @@ object SpatialPlayer {
                 while (fifoLen >= block && !stopRequested) {
                     val s = _state.value
                     val t0 = SystemClock.elapsedRealtimeNanos()
-                    val ahead = yaw + yawRate * s.lookaheadMs / 1000f
-                    BinauralRenderer.headRelative(s.spreadDeg, if (s.tracking) ahead else 0f, if (s.tracking) pitch else 0f, dirs[0])
-                    BinauralRenderer.headRelative(-s.spreadDeg, if (s.tracking) ahead else 0f, if (s.tracking) pitch else 0f, dirs[1])
+                    val headYaw = if (s.tracking) yaw + yawRate * s.lookaheadMs / 1000f else 0f
+                    val headPitch = if (s.tracking) pitch else 0f
+                    BinauralRenderer.headRelative(s.spreadDeg, headYaw, headPitch, dirs[0])
+                    BinauralRenderer.headRelative(-s.spreadDeg, headYaw, headPitch, dirs[1])
                     fifoL.copyInto(inL, 0, 0, block)
                     fifoR.copyInto(inR, 0, 0, block)
                     fifoL.copyInto(fifoL, 0, block, fifoLen)
@@ -445,9 +452,12 @@ object SpatialPlayer {
                     fifoLen -= block
                     outL.fill(0f); outR.fill(0f)
                     renderer!!.process(inL, inR, block, dirs, outL, outR)
+                    room!!.process(inL, inR, block, headYaw, headPitch, s.spreadDeg, s.room, outL, outR)
+                    // The room adds energy; trim so loud songs don't clip.
+                    val gain = GAIN / (1f + 0.6f * s.room)
                     for (i in 0 until block) {
-                        interleaved[2 * i] = (outL[i] * GAIN).coerceIn(-1f, 1f)
-                        interleaved[2 * i + 1] = (outR[i] * GAIN).coerceIn(-1f, 1f)
+                        interleaved[2 * i] = (outL[i] * gain).coerceIn(-1f, 1f)
+                        interleaved[2 * i + 1] = (outR[i] * gain).coerceIn(-1f, 1f)
                     }
                     cpuNs += SystemClock.elapsedRealtimeNanos() - t0
                     renderedFrames += block
