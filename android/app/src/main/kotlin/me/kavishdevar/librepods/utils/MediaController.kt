@@ -48,6 +48,12 @@ object MediaController {
     private const val PLAYBACK_DEBOUNCE_MS = 300L
     private var lastPlaybackCallbackAt: Long = 0L
     private var lastKnownIsMusicActive: Boolean? = null
+    // Whether media was playing at the last playback callback, to catch it starting.
+    private var mediaWasPlaying = false
+    /** Whether media is playing on the phone right now, as of the last playback callback. */
+    val mediaPlaying: Boolean get() = mediaWasPlaying
+    /** Called when media starts or stops playing on the phone. */
+    var onMediaPlayingChanged: (Boolean) -> Unit = {}
 
     private const val PAUSED_FOR_OTHER_DEVICE_CLEAR_MS = 500L
     private val clearPausedForOtherDeviceRunnable = Runnable {
@@ -75,7 +81,14 @@ object MediaController {
         }
         this.audioManager = audioManager
         this.sharedPreferences = sharedPreferences
-        this.musicPlayed = MediaController.musicPlayed
+        // Media may already be playing when LibrePods starts.
+        mediaWasPlaying = audioManager.isMusicActive && audioManager.activePlaybackConfigurations.any {
+            val usage = it.audioAttributes?.usage
+            usage == android.media.AudioAttributes.USAGE_MEDIA || usage == android.media.AudioAttributes.USAGE_GAME
+        }
+        // (Was `MediaController.musicPlayed`, the property assigned to itself, so the service's
+        // callback was never kept.)
+        this.musicPlayed = musicPlayed
         Log.d("MediaController", "Initializing MediaController")
         relativeVolume = sharedPreferences.getBoolean("relative_conversation_awareness_volume", false)
         conversationAwarenessVolume = sharedPreferences.getInt("conversation_awareness_volume", (audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 0.4).toInt())
@@ -113,6 +126,23 @@ object MediaController {
                 sendPlay()
                 lastKnownIsMusicActive = true
                 return
+            }
+
+            // Media starting (roadmap #14), checked on every callback: the first one after
+            // pressing play can arrive before the player is listed, and the ones that list it
+            // then fell inside the debounce below, so the AirPods were never asked for. Any media
+            // counts, podcasts (speech) included, not only music and films.
+            val mediaNow = isActive && configs?.any {
+                val usage = it.audioAttributes?.usage
+                usage == android.media.AudioAttributes.USAGE_MEDIA || usage == android.media.AudioAttributes.USAGE_GAME
+            } == true
+            val mediaStarted = mediaNow && !mediaWasPlaying
+            val mediaChanged = mediaNow != mediaWasPlaying
+            mediaWasPlaying = mediaNow
+            if (mediaChanged) onMediaPlayingChanged(mediaNow)
+            if (mediaStarted && !pausedWhileTakingOver && !recentlyLostOwnership) {
+                Log.d("MediaController", "Media started; asking for the AirPods")
+                musicPlayed()
             }
 
             if (now - lastPlaybackCallbackAt < PLAYBACK_DEBOUNCE_MS) {
@@ -175,8 +205,10 @@ object MediaController {
                 return
             }
 
-            if (configs != null && !iPausedTheMedia) {
-                if (localMac.isNullOrBlank()) return
+            // This block belongs to Apple's smart routing, which needs the phone's own Bluetooth
+            // address. Without one, skip just the block: returning from here, as it used to,
+            // also skipped the take-over check below, so music starting never asked for the AirPods.
+            if (configs != null && !iPausedTheMedia && !localMac.isNullOrBlank()) {
 //                ServiceManager.getService()?.aacpManager?.sendMediaInformataion(
 //                    localMac,
 //                    isActive
@@ -194,10 +226,8 @@ object MediaController {
             if (!pausedWhileTakingOver && isActive && hasNewMusicOrMovie) {
                 if (lastKnownIsMusicActive != true) {
                     if (!recentlyLostOwnership) {
-                        Log.d("MediaController", "Music/movie is active and not pausedWhileTakingOver; requesting takeOver")
-//                        TODO
-//                        ServiceManager.getService()?.takeOver("music")
-                        musicPlayed()
+                        // (The AirPods are asked for at the top of this callback now.)
+                        Log.d("MediaController", "Music/movie is active and not pausedWhileTakingOver")
                     } else {
                         Log.d("MediaController", "Skipping take-over due to recent ownership loss")
                     }

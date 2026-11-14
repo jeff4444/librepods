@@ -59,6 +59,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.kavishdevar.librepods.core.bluetooth.aacp.types.AppleEvent
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -117,6 +118,25 @@ private const val TAG = "LibrePodsService"
 private const val DEBUG_SHOW_ISLAND = "me.kavishdevar.librepods.DEBUG_SHOW_ISLAND"
 private const val DEBUG_SHOW_CARD = "me.kavishdevar.librepods.DEBUG_SHOW_CARD"
 private const val DEBUG_WATCH_CASE = "me.kavishdevar.librepods.DEBUG_WATCH_CASE"
+// Taking the AirPods when music starts (roadmap #14): how long to wait for their audio, and how
+// long to leave music alone after they didn't come.
+private const val MEDIA_TAKE_TIMEOUT_MS = 7_000L
+private const val MEDIA_TAKE_RETRY_AFTER_MS = 60_000L
+// The direct signal to a Mac sharing the AirPods: how long to listen for its word, and how long
+// to keep saying "idle" after stopping.
+private const val HANDOFF_ASK_MS = 700L
+// How long after media stops, with the phone put away, before it says the AirPods are up for
+// grabs; and how often the AirPods may follow the device in use, so a glance at the other
+// device doesn't trade them back and forth.
+private const val HANDOFF_AWAY_AFTER_MS = 60_000L
+// How long media must last before it may interrupt another device that is playing, and how
+// soon the other device taking the AirPods back counts as overruling that (and for how long).
+private const val MEDIA_SUSTAIN_MS = 1_500L
+private const val TAKING_BEACON_MS = 4_000L
+private const val OVERRULED_WITHIN_MS = 20_000L
+private const val OVERRULED_FOR_MS = 300_000L
+private const val FOLLOW_CHECK_EVERY_MS = 2_500L
+private const val FOLLOW_EVERY_MS = 20_000L
 private const val DEBUG_SENSORS = "me.kavishdevar.librepods.DEBUG_SENSORS"
 // Sets or lifts the disconnect hold without connecting:
 //   adb shell am broadcast -a me.kavishdevar.librepods.DEBUG_HOLD --ez on false -p me.kavishdevar.librepods.dev2
@@ -633,13 +653,22 @@ class LibrePodsService: Service() {
 
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            bleManager.setScreenOn(intent.action == Intent.ACTION_SCREEN_ON)
-            screenOn = intent.action == Intent.ACTION_SCREEN_ON
-            updateLidWatcher()
+            // A screen saver while charging has the screen "on" with nobody there.
+            if (intent.action == Intent.ACTION_DREAMING_STARTED) dreaming = true
+            if (intent.action == Intent.ACTION_DREAMING_STOPPED) dreaming = false
+            // (Unlocking arrives as USER_PRESENT, with the screen already on.)
+            if (intent.action == Intent.ACTION_SCREEN_ON || intent.action == Intent.ACTION_SCREEN_OFF) {
+                bleManager.setScreenOn(intent.action == Intent.ACTION_SCREEN_ON)
+                screenOn = intent.action == Intent.ACTION_SCREEN_ON
+                updateLidWatcher()
+            }
+            updateHandoffBeacon()
+            updateFollow()
         }
     }
 
     private var screenOn = true
+    private var dreaming = false
 
     /** Shows the Pixel Buds case card when their lid opens (see [PixelBudsLidWatcher]). */
     private val pixelBudsLidWatcher by lazy {
@@ -824,8 +853,9 @@ class LibrePodsService: Service() {
             return
         }
 
-        for ((device, accessoryState) in candidates) {
+        for ((device, reported) in candidates) {
             val settings = device.settings.value
+            val accessoryState = hostState(device, reported)
 
             if (device.heldDisconnected) {
                 Log.d(TAG, "Not connecting ${device.macAddress.toRedactedString()} for $trigger: the user disconnected it")
@@ -846,7 +876,9 @@ class LibrePodsService: Service() {
                 "media" -> when (accessoryState) {
                     AccessoryState.Disconnected -> settings.connectOnMediaWhenAccessoryDisconnected
                     AccessoryState.Idle -> settings.connectOnMediaWhenAccessoryIdle
-                    AccessoryState.Music -> settings.connectOnMediaWhenAccessoryMusic
+                    // The AirPods say "music" for a while after their host stops; a Mac running
+                    // the helper says straight away whether it really is playing, so ask it.
+                    AccessoryState.Music -> settings.connectOnMediaWhenAccessoryMusic || settings.connectOnMediaWhenAccessoryIdle || settings.takeWhenOtherPlaying
                     else -> false
                 } else -> false
             }
@@ -856,10 +888,252 @@ class LibrePodsService: Service() {
                     TAG,
                     "Connecting to ${device.macAddress.toRedactedString()} (state state: $accessoryState) for $trigger"
                 )
-                device.connect()
+                if (trigger == "media") {
+                    takeForMedia(device, hostSaysPlaying = accessoryState == AccessoryState.Music)
+                } else device.connect()
                 break
             }
         }
+    }
+
+    /**
+     * What the AirPods' host is doing, for deciding whether to take them. The byte they report
+     * is flags, and the named states don't cover all of it. Seen on firmware 9B47 (14 Nov 2026):
+     * 04 and 08 a host that is silent (08 after a couple of minutes on a Mac, 0C for a moment
+     * after connecting); 05, 09 and 0D the same with media playing (bit 0); 06 and 07 a call (bit 1).
+     */
+    private fun hostState(device: AppleDevice, reported: AccessoryState): AccessoryState {
+        val byte = device.state.value.accessoryStateByte
+        return when {
+            byte < 0 -> reported
+            byte == 0 -> AccessoryState.Disconnected
+            byte and 0x02 != 0 -> AccessoryState.Call
+            byte and 0x01 != 0 -> AccessoryState.Music
+            else -> AccessoryState.Idle
+        }
+    }
+
+    // After the AirPods didn't come when music started, music starting is left alone until then.
+    private var mediaTakeBlockedUntil = 0L
+    private var mediaTakeRunning = false
+    // Taking from a device that was playing: when, and until when not to after being overruled.
+    private var tookFromBusyAt = 0L
+    private var overruledUntil = 0L
+    private var takingUntil = 0L
+
+    /**
+     * Media started on the phone while the AirPods are worn but with another device, such as the
+     * Mac (roadmap #14). The newest connection wins with AirPods, so connecting takes them: hold
+     * the song, connect, and carry on once their audio is up, so it doesn't start on the phone's
+     * speaker. If they don't come within a few seconds the song carries on from the phone, and
+     * media starting is left alone for a minute so pressing play can't keep pausing it.
+     *
+     * With [hostSaysPlaying] the AirPods report that their host is playing, and it's decided by
+     * priority first (see [mayInterrupt]).
+     */
+    private fun takeForMedia(device: AppleDevice, hostSaysPlaying: Boolean = false) {
+        val started = SystemClock.elapsedRealtime()
+        if (started < mediaTakeBlockedUntil) {
+            Log.i(TAG, "not taking ${device.macAddress.toRedactedString()} for media: they didn't come a moment ago")
+            return
+        }
+        if (mediaTakeRunning) return
+        mediaTakeRunning = true
+        val audio = getSystemService(AudioManager::class.java)
+        serviceCoroutineScope.launch(Dispatchers.Main) {
+            if (hostSaysPlaying) {
+                // Decide with the phone's own sound muted, so nothing plays out loud meanwhile.
+                val muted = !audio.isStreamMute(AudioManager.STREAM_MUSIC)
+                if (muted) audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
+                val take = runCatching { mayInterrupt(device, started) }.getOrDefault(false)
+                if (take) {
+                    MediaController.pausedWhileTakingOver = true
+                    MediaController.sendPause(force = true)
+                    delay(150)
+                }
+                if (muted) audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                if (!take) {
+                    mediaTakeRunning = false
+                    return@launch
+                }
+            } else {
+                MediaController.pausedWhileTakingOver = true
+                MediaController.sendPause(force = true)
+            }
+            bringOverForMedia(device, audio, started)
+        }
+    }
+
+    /**
+     * Whether media that just started here may take the AirPods from a host that the AirPods say
+     * is playing. By priority, like Apple's own switching, with guards against the wrong sound
+     * winning:
+     * - a Mac running the helper that says it has in fact stopped: yes, at once;
+     * - otherwise the newest play wins, but only with the screen on (so you started it, it
+     *   didn't start by itself), only once the sound has lasted a moment (so it isn't a clip or
+     *   a beep), and not for a few minutes after the other device took them straight back.
+     * (Calls never get here: the AirPods report those as a call, not as music.)
+     */
+    private suspend fun mayInterrupt(device: AppleDevice, started: Long): Boolean {
+        val said = withContext(Dispatchers.IO) { handoffBeacon.macState(device.macAddress, HANDOFF_ASK_MS) }
+        Log.i(TAG, "the AirPods' host says: ${said ?: "nothing"} (${SystemClock.elapsedRealtime() - started} ms)")
+        if (said == HandoffBeacon.State.IDLE || said == HandoffBeacon.State.AWAY) return true
+        val settings = device.settings.value
+        if (!settings.connectOnMediaWhenAccessoryMusic) {
+            if (!settings.takeWhenOtherPlaying) return false
+            if (!screenOn || dreaming) {
+                Log.i(TAG, "not interrupting the other device: the screen is off, so this started by itself")
+                return false
+            }
+            if (SystemClock.elapsedRealtime() < overruledUntil) {
+                Log.i(TAG, "not interrupting the other device: it took the AirPods straight back a few minutes ago")
+                return false
+            }
+        }
+        while (SystemClock.elapsedRealtime() - started < MEDIA_SUSTAIN_MS && MediaController.mediaPlaying) delay(50)
+        if (!MediaController.mediaPlaying) {
+            Log.i(TAG, "not interrupting the other device: the sound here stopped by itself")
+            return false
+        }
+        tookFromBusyAt = SystemClock.elapsedRealtime()
+        // Tell the Mac, so it stops and lets go instead of being pushed off, which is slower.
+        takingUntil = SystemClock.elapsedRealtime() + TAKING_BEACON_MS
+        handoffBeacon.advertise(device.macAddress, HandoffBeacon.State.TAKING)
+        handoffBeaconJob?.cancel()
+        handoffBeaconJob = serviceCoroutineScope.launch {
+            delay(TAKING_BEACON_MS + 50)
+            updateHandoffBeacon()
+        }
+        return true
+    }
+
+    private fun bringOverForMedia(device: AppleDevice, audio: AudioManager, started: Long) {
+        val arrived = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun resume(how: String) {
+            if (!arrived.compareAndSet(false, true)) return
+            Log.i(TAG, "took ${device.macAddress.toRedactedString()} for media in ${SystemClock.elapsedRealtime() - started} ms ($how)")
+            MediaController.sendPlay(force = true)
+        }
+        val receiver = device.waitForA2dpConnection(this) { resume("A2DP connected") }
+        fun hasA2dpOutput() = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+        // With other Bluetooth headphones already connected, an output proves nothing: wait for the broadcast.
+        val watchOutputs = !hasA2dpOutput()
+        serviceCoroutineScope.launch(Dispatchers.IO) {
+            // Ask for the music link alone first: it brings the Bluetooth link up, and nothing
+            // else competes with it for air time. Calls and the AirPods' own channel follow
+            // once the music is back.
+            device.connectA2dp()
+            var restStarted = false
+            fun startRest() {
+                if (restStarted) return
+                restStarted = true
+                device.connectHeadset()
+                launch {
+                    val linked = device.connect()
+                    Log.i(TAG, "media take-over: AirPods channel ${if (linked) "up" else "failed"} after ${SystemClock.elapsedRealtime() - started} ms")
+                }
+            }
+            // Carry on the moment Android has the AirPods as a sound output; the A2DP broadcast
+            // can trail that by half a second.
+            while (!arrived.get() && SystemClock.elapsedRealtime() - started < MEDIA_TAKE_TIMEOUT_MS) {
+                if (watchOutputs && hasA2dpOutput()) {
+                    launch(Dispatchers.Main) { resume("sound output ready") }
+                    break
+                }
+                // If the music link is slow in coming, don't hold the rest back for long.
+                if (SystemClock.elapsedRealtime() - started > 3_000) startRest()
+                delay(30)
+            }
+            if (!arrived.get()) delay(200)
+            startRest()
+            runCatching { unregisterReceiver(receiver) }
+            if (!arrived.get()) {
+                mediaTakeBlockedUntil = SystemClock.elapsedRealtime() + MEDIA_TAKE_RETRY_AFTER_MS
+                Log.w(TAG, "${device.macAddress.toRedactedString()} didn't come for media; playing on from the phone")
+                launch(Dispatchers.Main) { MediaController.sendPlay(force = true) }
+            }
+            mediaTakeRunning = false
+        }
+    }
+
+    private val handoffBeacon by lazy { HandoffBeacon(this) }
+    private var handoffBeaconJob: Job? = null
+    private var mediaStoppedAt = 0L
+
+    /** The screen is on and unlocked: the nearest thing to "this phone is being used". */
+    private fun phoneInUse(): Boolean =
+        screenOn && !dreaming && getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == false
+
+    /**
+     * Tells a Mac that shares the AirPods what this phone is doing with them (roadmap #14):
+     * "busy" while media plays or a call is on; otherwise "idle" while the phone is in use or
+     * only just stopped playing, and "away" once it's put away; nothing when the AirPods aren't here.
+     */
+    private fun updateHandoffBeacon() {
+        val airPods = devices.value.values.filterIsInstance<AppleDevice>().firstOrNull { it.connectionState.value == ConnectionState.CONNECTED }
+        val mode = getSystemService(AudioManager::class.java).mode
+        val inCall = mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_RINGTONE
+        // While announcing a take, the AirPods aren't here yet: keep announcing.
+        if (airPods == null && SystemClock.elapsedRealtime() < takingUntil) return
+        handoffBeaconJob?.cancel()
+        if (airPods == null) {
+            handoffBeacon.advertise(null, null)
+            return
+        }
+        val sinceStopped = SystemClock.elapsedRealtime() - mediaStoppedAt
+        val state = when {
+            MediaController.mediaPlaying || inCall -> HandoffBeacon.State.BUSY
+            phoneInUse() -> HandoffBeacon.State.IDLE
+            // A press on the stem may be about to resume the song: don't offer them yet.
+            sinceStopped < HANDOFF_AWAY_AFTER_MS -> HandoffBeacon.State.IDLE
+            else -> HandoffBeacon.State.AWAY
+        }
+        handoffBeacon.advertise(airPods.macAddress, state)
+        if (state == HandoffBeacon.State.IDLE && !phoneInUse()) {
+            handoffBeaconJob = serviceCoroutineScope.launch {
+                delay(HANDOFF_AWAY_AFTER_MS - sinceStopped + 50)
+                updateHandoffBeacon()
+            }
+        }
+    }
+
+    private var followJob: Job? = null
+    private var followedAt = 0L
+
+    /**
+     * Following the device in use (roadmap #14): while this phone is unlocked and the AirPods
+     * are worn but idle on a Mac running the helper, listen every few seconds for the Mac's
+     * word, and take them once it says nobody is using it. Then pressing play here is instant.
+     */
+    private fun updateFollow() {
+        if (!phoneInUse()) {
+            followJob?.cancel()
+            followJob = null
+            return
+        }
+        if (followJob?.isActive == true) return
+        followJob = serviceCoroutineScope.launch(Dispatchers.IO) {
+            while (phoneInUse()) {
+                runCatching { followCheck() }.onFailure { Log.w(TAG, "follow check failed", it) }
+                delay(FOLLOW_CHECK_EVERY_MS)
+            }
+        }
+    }
+
+    private suspend fun followCheck() {
+        if (MediaController.mediaPlaying) return
+        if (SystemClock.elapsedRealtime() - followedAt < FOLLOW_EVERY_MS) return
+        val (device, reported) = bleManager.getCandidateDevicesForProxConnect().firstOrNull { (d, _) ->
+            d.settings.value.followDeviceInUse && !d.heldDisconnected && !budsInCase(d.state.value)
+        } ?: return
+        if (hostState(device, reported) != AccessoryState.Idle) return
+        if (handoffBeacon.macState(device.macAddress, HANDOFF_ASK_MS) != HandoffBeacon.State.AWAY) return
+        if (!phoneInUse() || MediaController.mediaPlaying) return
+        followedAt = SystemClock.elapsedRealtime()
+        Log.i(TAG, "following: this phone is in use and the Mac isn't; taking ${device.macAddress.toRedactedString()}")
+        device.connectA2dp()
+        device.connectHeadset()
+        device.connect()
     }
 
     override fun onCreate() {
@@ -886,7 +1160,11 @@ class LibrePodsService: Service() {
         registerReceiver(screenStateReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_DREAMING_STARTED)
+            addAction(Intent.ACTION_DREAMING_STOPPED)
         }, RECEIVER_NOT_EXPORTED)
+        updateFollow()
         if (BuildConfig.DEBUG) {
             // Exported so adb can reach it, but only senders holding DUMP may: adb's shell has it,
             // ordinary apps can't get it, so other apps on the phone can't drive these commands.
@@ -912,6 +1190,11 @@ class LibrePodsService: Service() {
                 attemptConnect("media")
             }
         )
+        MediaController.onMediaPlayingChanged = { playing ->
+            if (!playing) mediaStoppedAt = SystemClock.elapsedRealtime()
+            updateHandoffBeacon()
+        }
+        getSystemService(AudioManager::class.java).addOnModeChangedListener(mainExecutor) { updateHandoffBeacon() }
 
         if (
             checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED &&
@@ -1263,6 +1546,13 @@ class LibrePodsService: Service() {
     private fun onDeviceDisconnected(mac: MacAddress) {
         Log.i(TAG, "Device disconnected: $mac")
         val device = devices.value[mac]?: return
+        val stillPlaying = MediaController.mediaPlaying || SystemClock.elapsedRealtime() - mediaStoppedAt < 1_500
+        if (stillPlaying && SystemClock.elapsedRealtime() - tookFromBusyAt < OVERRULED_WITHIN_MS) {
+            // Taken straight back, mid-song: that take was wrong. Don't interrupt the other device again for a while.
+            tookFromBusyAt = 0L
+            overruledUntil = SystemClock.elapsedRealtime() + OVERRULED_FOR_MS
+            Log.i(TAG, "the other device took the AirPods straight back; not interrupting it again for ${OVERRULED_FOR_MS / 60_000} minutes")
+        }
         device.disconnect()
         updateDeviceNotification(device = device)
     }
@@ -1481,6 +1771,7 @@ class LibrePodsService: Service() {
             var previousConnectionState = ConnectionState.DISCONNECTED
             device.connectionState.collect { state ->
                 if (device is AppleDevice && cardShows(device)) proximityCardWindow.updateConnectionState(state == ConnectionState.CONNECTED)
+                if (device is AppleDevice) updateHandoffBeacon()
 
                 if (device is AppleDevice && state == ConnectionState.CONNECTED && previousConnectionState != ConnectionState.CONNECTED) {
                     serviceCoroutineScope.launch {

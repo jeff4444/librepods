@@ -49,6 +49,12 @@ data class AppleSettings(
     val connectOnMediaWhenAccessoryDisconnected: Boolean = true,
     val connectOnMediaWhenAccessoryIdle: Boolean = true,
     val connectOnMediaWhenAccessoryMusic: Boolean = false,
+    // Take the AirPods from a Mac running the helper as soon as this phone is in use and the Mac
+    // isn't, before anything plays (roadmap #14).
+    val followDeviceInUse: Boolean = true,
+    // Newest play wins: take the AirPods even while the other device is playing, when media
+    // clearly started here on purpose (screen on, lasting more than a moment).
+    val takeWhenOtherPlaying: Boolean = true,
 
     val conversationAwarenessPauseMusicEnabled: Boolean = false, // conversation_awareness_pause_music
     val relativeConversationAwarenessVolumeEnabled: Boolean = true, // relative_conversation_awareness_volume

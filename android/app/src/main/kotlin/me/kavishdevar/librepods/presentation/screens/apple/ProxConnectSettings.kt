@@ -56,6 +56,10 @@ fun ProxConnectSettingsRoute(
                 )
             }
         },
+        takeWhenOtherPlaying = uiState.settings.takeWhenOtherPlaying,
+        onTakeWhenOtherPlayingChanged = { enabled -> viewModel.updateSettings { it.copy(takeWhenOtherPlaying = enabled) } },
+        followDeviceInUse = uiState.settings.followDeviceInUse,
+        onFollowDeviceInUseChanged = { enabled -> viewModel.updateSettings { it.copy(followDeviceInUse = enabled) } },
         connectOnPhoneWhenAccessoryDisconnected = uiState.settings.connectOnPhoneWhenAccessoryDisconnected,
         onConnectOnPhoneWhenAccessoryDisconnectedChanged = { enabled ->
             viewModel.updateSettings {
@@ -114,6 +118,11 @@ fun ProxConnectSettingsScreen(
     alwaysConnectWhenAccessoryDisconnected: Boolean,
     onAlwaysConnectWhenAccessoryDisconnectedChanged: (Boolean) -> Unit,
 
+    takeWhenOtherPlaying: Boolean = true,
+    onTakeWhenOtherPlayingChanged: (Boolean) -> Unit = {},
+    followDeviceInUse: Boolean = true,
+    onFollowDeviceInUseChanged: (Boolean) -> Unit = {},
+
     connectOnPhoneWhenAccessoryDisconnected: Boolean,
     onConnectOnPhoneWhenAccessoryDisconnectedChanged: (Boolean) -> Unit,
     connectOnPhoneWhenAccessoryIdle: Boolean,
@@ -147,6 +156,22 @@ fun ProxConnectSettingsScreen(
                 description = stringResource(R.string.always_connect_when_disconnected_description),
                 checked = alwaysConnectWhenAccessoryDisconnected,
                 onCheckedChange = onAlwaysConnectWhenAccessoryDisconnectedChanged
+            )
+
+            StyledToggle(
+                label = "Newest play wins",
+                description = "Take the AirPods even while the other device is playing, when you start something here: " +
+                    "only with the screen on and once the sound has lasted a moment. Calls on the other device are never interrupted.",
+                checked = takeWhenOtherPlaying,
+                onCheckedChange = onTakeWhenOtherPlayingChanged
+            )
+
+            StyledToggle(
+                label = "Follow the device I'm using",
+                description = "With a Mac running LibrePods Handoff: bring the AirPods to this phone when you unlock it " +
+                    "and the Mac isn't being used, before anything plays, so pressing play is instant.",
+                checked = followDeviceInUse,
+                onCheckedChange = onFollowDeviceInUseChanged
             )
 
             StyledList(
